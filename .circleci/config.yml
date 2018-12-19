@@ -2,18 +2,15 @@ version: 2
 jobs:
   build:
     docker:
-      - image: "debian:stretch"
+      - image: "circleci/python:3.7.1"
     steps:
       - checkout
       - run: 
           name: Updating Package List
-          command: apt-get update
-      - run:
-          name: Installing Build Tools
-          command: apt-get install -y gcc g++ make
+          command: sudo apt-get update
       - run:
           name: Installing htslib
-          command: apt-get install -y libhts1 libhts-dev
+          command: sudo apt-get install -y libhts1 libhts-dev
       - run:
           name: Run Make
           command: 'make clean && make'
