@@ -41,7 +41,7 @@ void print_usage(const char* exe, std::ostream& os) {
     if(p != nullptr && p[0] != '\0' && p[1] != '\0') {
         exe = p+1;
     }
-    os << "Usage: " << exe << " [OPTION]... [FILE].. > [OUTPUT]\n"
+    os << "Usage: " << exe << " [OPTION]... [FILE] > [OUTPUT]\n"
     "Rescale genetic polymorphism data to match a common sample size.\n"
     "\n"
     "With no FILE or when FILE is -, read standard input.\n"
@@ -51,7 +51,7 @@ void print_usage(const char* exe, std::ostream& os) {
     "  -f -u                generated (f)olded or (u)nfolded distributions\n"
     "  -t -r                use AA (t)ag or (r)eference allele as ancestral\n"
     "  -z number            add extra invariant sites to manage ascertainment bias\n"
-    "  -q -v                (q)uiet progress data or be (v)erbose\n"
+    "  -q -v                (q)uiet progress info or be (v)erbose\n"
     "  -h                   print usage information\n"
     "\n"
     "Default: " << exe << " -f -a 1.0 -b 1.0 -n 9\n"

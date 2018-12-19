@@ -2,13 +2,12 @@ CXX?=c++
 DEBUG?=0
 HTSLIB?=-lhts -lm
 
-CXXFLAGS+=-std=c++11
-
 ifeq ($(DEBUG), 1)
-	CXXFLAGS+=-g -O0
+	CXXFLAGS?=-g -O0
 else
-	CXXFLAGS+=-O2 -DNDEBUG
+	CXXFLAGS?=-O2 -DNDEBUG
 endif
+CXXFLAGS+=-std=c++11
 
 default: all
 
