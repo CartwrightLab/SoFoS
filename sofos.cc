@@ -1,5 +1,5 @@
 /*****************************************************************************
-Copyright (c) 2010,2018 Reed A. Cartwright, PhD <reed@cartwrig.ht>
+Copyright (c) 2018 Reed A. Cartwright, PhD <reed@cartwrig.ht>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -35,9 +35,31 @@ SOFTWARE.
 #include <htslib/vcf.h>
 #include <htslib/vcfutils.h>
 
+
+// a:b:n:hufrtz:qv
 // print a usage message for sofos
 void print_usage(const char* exe, std::ostream& os) {
-    os << "Usage: " << exe << " -a alpha_param -b beta_param -n rescale_size [filepath] > output.csv\n";
+    const char* p = strrchr(exe, '/');
+    if(p != nullptr && p[0] != '\0' && p[1] != '\0') {
+        exe = p+1;
+    }
+    os << "Usage: " << exe << " [OPTION]... [FILE].. > [OUTPUT]\n"
+    "Rescale genetic polymorphism data to match a common sample size.\n"
+    "\n"
+    "With no FILE or when FILE is -, read standard input.\n"
+    "\n"
+    "  -a number -b number  shape parameters of beta prior\n"
+    "  -n integer           number of gene copies in posterior resample\n"
+    "  -f -u                generated (f)olded or (u)nfolded distributions\n"
+    "  -t -r                use AA (t)ag or (r)eference allele as ancestral\n"
+    "  -z number            add extra invariant sites to manage ascertainment bias\n"
+    "  -q -v                (q)uiet progress data or be (v)erbose\n"
+    "\n"
+    "Default: " << exe << " -f -a 1.0 -b 1.0 -n 9\n"
+    "Note: Unless otherwise stated -f enables -r and -u enables -t.\n"
+    "\n"
+    "Copyright (c) 2018 Reed A. Cartwright, PhD <reed@cartwrig.ht>\n"
+    "\n";
 }
 
 // Globals
