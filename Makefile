@@ -1,4 +1,14 @@
 CXX?=c++
+DEBUG?=0
+HTSLIB?=-lhts -lm
+
+CXXFLAGS+=-std=c++11
+
+ifeq ($(DEBUG), 1)
+	CXXFLAGS+=-g -O0
+else
+	CXXFLAGS+=-O2 -DNDEBUG
+endif
 
 default: all
 
@@ -10,5 +20,5 @@ clean:
 	rm -f sofos
 
 sofos: sofos.cc
-	$(CXX) -O2 -std=c++11 -lhts -lm -o $@ $<
+	$(CXX) $(CXXFLAGS) $(HTSLIB) -o $@ $<
 
