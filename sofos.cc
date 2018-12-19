@@ -35,8 +35,6 @@ SOFTWARE.
 #include <htslib/vcf.h>
 #include <htslib/vcfutils.h>
 
-
-// a:b:n:hufrtz:qv
 // print a usage message for sofos
 void print_usage(const char* exe, std::ostream& os) {
     const char* p = strrchr(exe, '/');
@@ -54,6 +52,7 @@ void print_usage(const char* exe, std::ostream& os) {
     "  -t -r                use AA (t)ag or (r)eference allele as ancestral\n"
     "  -z number            add extra invariant sites to manage ascertainment bias\n"
     "  -q -v                (q)uiet progress data or be (v)erbose\n"
+    "  -h                   print usage information\n"
     "\n"
     "Default: " << exe << " -f -a 1.0 -b 1.0 -n 9\n"
     "Note: Unless otherwise stated -f enables -r and -u enables -t.\n"
