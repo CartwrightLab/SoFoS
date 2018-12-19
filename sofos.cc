@@ -316,14 +316,14 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
         nsites += 1;
 
         // Output a progress message every minute or so.
-        if(!g_sofos_quiet && (nsites % 1024) == 0) {
+        if(nsites % 1000 == 0 && !g_sofos_quiet) {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last);
             if(elapsed.count() >= 60) {
                 elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start);
                 last = now;
                 std::cerr << "## [" << elapsed.count() << "s elapsed] "
-                          << nsites << " sites processed --- "
+                          << nsites << " sites processed --- at "
                           << bcf_seqname(header.get(), record.get()) << ":" << record->pos+1
                           << std::endl;
             }
