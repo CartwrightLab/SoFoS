@@ -77,7 +77,10 @@ constexpr unsigned int SOFOS_FLAG_REFALT=2;
 
 // Function and Class Declarations
 int sofos_main(const char *path, double alpha, double beta, int size,
-    double zero, double ploidy, unsigned int flags=SOFOS_FLAG_DEFAULT);
+    double error_rate,
+    double zero, double ploidy,
+    unsigned int flags=SOFOS_FLAG_DEFAULT);
+
 std::pair<std::string, std::string> timestamp();
 bool is_ref_missing(bcf1_t* record);
 bool is_allele_missing(const char* a);
@@ -135,10 +138,11 @@ int main(int argc, char *argv[]) {
         bool folded = true;
         int refalt = -1;
         double ploidy = 2;
+        double error_rate = 0.0;
 
         // Process program options via getopt
         char c = 0;
-        while((c = getopt(argc, argv, "a:b:n:hufrtz:P:qv")) != -1) {
+        while((c = getopt(argc, argv, "a:b:n:e:hufrtz:P:qv")) != -1) {
             switch(c) {
             case 'a':
                 alpha = std::stod(optarg);
@@ -148,6 +152,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'n':
                 size =  std::stoi(optarg);
+                break;
+            case 'e':
+                error_rate = std::stod(optarg);
                 break;
             case 'z':
                 zero = std::stod(optarg);
@@ -194,7 +201,7 @@ int main(int argc, char *argv[]) {
         unsigned int flags = SOFOS_FLAG_DEFAULT;
         flags |= (folded) ? SOFOS_FLAG_FOLDED : 0; 
         flags |= (refalt == 1 || (refalt != 0 && folded)) ? SOFOS_FLAG_REFALT : 0;
-        return sofos_main(path, alpha, beta, size, zero, ploidy, flags);
+        return sofos_main(path, alpha, beta, size, error_rate, zero, ploidy, flags);
 
     } catch(std::exception &e) {
         // If an exception is thrown, print it to stderr.
@@ -204,8 +211,14 @@ int main(int argc, char *argv[]) {
 }
 
 // the main processing function
-int sofos_main(const char *path, double alpha, double beta, int size, double zero, double ploidy, unsigned int flags) {
+int sofos_main(const char *path, double alpha, double beta, int size, double error_rate,
+        double zero, double ploidy, unsigned int flags) {
     assert(path != nullptr);
+    assert(alpha > 0.0 && beta > 0.0);
+    assert(size > 0);
+    assert(0.0 <= error_rate && error_rate <= 1.0);
+    assert(zero >= 0.0);
+    assert(ploidy >= 0.0);
 
     // open the input file or throw on error
     vcfFile *input_ptr = vcf_open(path,"r");
@@ -224,9 +237,15 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
     std::cout << "#alpha=" << alpha << "\n";
     std::cout << "#beta=" << beta << "\n";
     std::cout << "#size=" << size << "\n";
+    if(error_rate > 0.0) {
+        std::cout << "#error_rate=" << error_rate << "\n";
+    }
     std::cout << "#folded=" << ((flags & SOFOS_FLAG_FOLDED) ? 1 : 0) << "\n";
     std::cout << "#refalt=" << ((flags & SOFOS_FLAG_REFALT) ? 1 : 0) << "\n";
-
+    if(zero > 0.0) {
+        std::cout << "#zero=" << zero << "\n";
+        std::cout << "#ploidy=" << ploidy << "\n";
+    }
     // Setup for reading from vcf file
     std::unique_ptr<vcfFile,file_free_t> input{input_ptr};
     std::unique_ptr<bcf_hdr_t,header_free_t> header{bcf_hdr_read(input.get())};
@@ -288,7 +307,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
         // Skip line if it fails
         ac_buffer.assign(record->n_allele,0.0);
         if(bcf_calc_ac(header.get(), record.get(), ac_buffer.data(),
-                ac_which) == 0) {
+                ac_which) <= 0) {
             continue;
         }
         int n_total = std::accumulate(ac_buffer.begin(), ac_buffer.end(), 0);
@@ -301,7 +320,22 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
 
         // Update posterior using observed counts, which may be 0 and 0.
         if(!(flags & SOFOS_FLAG_FOLDED)) {
-            update_counts(alpha + n_der, beta + n_anc, 1.0, &posterior);
+            if(error_rate == 0.0) {
+                update_counts(alpha + n_der, beta + n_anc, 1.0, &posterior);
+                // Update the observed bins based on observed counts, skipping 0 and 0.
+                // This maps the observed frequency onto a bin based on size.
+                update_bins(n_der, n_anc, 1.0, &bins);
+            } else {
+                // If there is some level of uncertainty about the ancestral allele,
+                // weight the two possibilities.
+                // anc is ancestral
+                update_counts(alpha + n_der, beta + n_anc, 1.0-error_rate, &posterior);
+                // der is ancestral
+                update_counts(alpha + n_anc, beta + n_der, error_rate, &posterior);
+
+                update_bins(n_der, n_anc, 1.0-error_rate, &bins);
+                update_bins(n_anc, n_der, error_rate, &bins);
+            }
         } else {
             // When calculating the folded spectrum, we can't assume that either
             // allele is ancestral. Thus we will update the posterior weighted
@@ -313,13 +347,11 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
             update_counts(alpha + n_anc, beta + n_der, f, &posterior);
             // anc is ancestral
             update_counts(alpha + n_der, beta + n_anc, 1.0-f, &posterior);
+
+            update_bins(n_anc, n_der, f, &bins);
+            update_bins(n_der, n_anc, 1.0-f, &bins);
         }
 
-        // Update the observed bins based on observed counts, skipping 0 and 0.
-        // This maps the observed frequency onto a bin based on size.
-        if(n_der+n_anc > 0) {
-            update_bins(n_der, n_anc, 1.0, &bins);
-        }
 
         // Increment the number of observed sites.
         nsites += 1;
@@ -348,8 +380,10 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
     }
 
     // Add zero-count sites (for controlling ascertainment bias)
-    update_counts(alpha, beta+ploidy*nsamples, zero, &posterior);
-    update_bins(0, ploidy*nsamples, zero, &bins);
+    if(zero > 0.0) {
+        update_counts(alpha, beta+ploidy*nsamples, zero, &posterior);
+        update_bins(0, ploidy*nsamples, zero, &bins);
+    }
 
     // calculate prior assuming no data
     std::vector<double> prior(posterior.size(), 0.0);
@@ -471,7 +505,9 @@ void update_counts(double a, double b, double weight, std::vector<double> *count
 void update_bins(double a, double b, double weight, std::vector<double> *bins) {
     assert(bins != nullptr);
     assert(a >= 0.0 && b >= 0.0);
-    assert(a+b > 0);
+    if(a+b == 0.0) {
+        return;
+    }
     // bins are from [0,n]
     int n = bins->size()-1;
     double f = a/(a+b)*n;
