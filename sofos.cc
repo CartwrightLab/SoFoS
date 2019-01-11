@@ -77,7 +77,7 @@ constexpr unsigned int SOFOS_FLAG_REFALT=2;
 
 // Function and Class Declarations
 int sofos_main(const char *path, double alpha, double beta, int size,
-    double zero, unsigned int flags=SOFOS_FLAG_DEFAULT);
+    double zero, double ploidy, unsigned int flags=SOFOS_FLAG_DEFAULT);
 std::pair<std::string, std::string> timestamp();
 bool is_ref_missing(bcf1_t* record);
 bool is_allele_missing(const char* a);
@@ -127,7 +127,6 @@ int get_string(const bcf_hdr_t *header, bcf1_t *record,
 // Main program entry point
 int main(int argc, char *argv[]) {
     try {
-
         // default parameters
         double alpha = 1.0;
         double beta = 1.0;
@@ -135,10 +134,11 @@ int main(int argc, char *argv[]) {
         int size = 9;
         bool folded = true;
         int refalt = -1;
+        double ploidy = 2;
 
         // Process program options via getopt
         char c = 0;
-        while((c = getopt(argc, argv, "a:b:n:hufrtz:qv")) != -1) {
+        while((c = getopt(argc, argv, "a:b:n:hufrtz:P:qv")) != -1) {
             switch(c) {
             case 'a':
                 alpha = std::stod(optarg);
@@ -151,6 +151,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'z':
                 zero = std::stod(optarg);
+                break;
+            case 'P':
+                ploidy = std::stod(optarg);
                 break;
             case 'u':
                 folded = false;
@@ -191,7 +194,7 @@ int main(int argc, char *argv[]) {
         unsigned int flags = SOFOS_FLAG_DEFAULT;
         flags |= (folded) ? SOFOS_FLAG_FOLDED : 0; 
         flags |= (refalt == 1 || (refalt != 0 && folded)) ? SOFOS_FLAG_REFALT : 0;
-        return sofos_main(path, alpha, beta, size, zero, flags);
+        return sofos_main(path, alpha, beta, size, zero, ploidy, flags);
 
     } catch(std::exception &e) {
         // If an exception is thrown, print it to stderr.
@@ -201,7 +204,7 @@ int main(int argc, char *argv[]) {
 }
 
 // the main processing function
-int sofos_main(const char *path, double alpha, double beta, int size, double zero, unsigned int flags) {
+int sofos_main(const char *path, double alpha, double beta, int size, double zero, double ploidy, unsigned int flags) {
     assert(path != nullptr);
 
     // open the input file or throw on error
@@ -345,8 +348,8 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
     }
 
     // Add zero-count sites (for controlling ascertainment bias)
-    update_counts(alpha, beta+nsamples, zero, &posterior);
-    update_bins(0, nsamples, zero, &bins);
+    update_counts(alpha, beta+ploidy*nsamples, zero, &posterior);
+    update_bins(0, ploidy*nsamples, zero, &bins);
 
     // calculate prior assuming no data
     std::vector<double> prior(posterior.size(), 0.0);
