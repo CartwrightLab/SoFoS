@@ -72,7 +72,7 @@ bool g_sofos_quiet=false;
 
 // Flags used to control sofos_main
 constexpr unsigned int SOFOS_FLAG_DEFAULT=0;
-constexpr unsigned int SOFOS_FLAG_UNFOLDED=1;
+constexpr unsigned int SOFOS_FLAG_FOLDED=1;
 constexpr unsigned int SOFOS_FLAG_REFALT=2;
 
 // Function and Class Declarations
@@ -189,7 +189,7 @@ int main(int argc, char *argv[]) {
         }
         // Setup flags for sofos_main
         unsigned int flags = SOFOS_FLAG_DEFAULT;
-        flags |= (!folded) ? SOFOS_FLAG_UNFOLDED : 0; 
+        flags |= (folded) ? SOFOS_FLAG_FOLDED : 0; 
         flags |= (refalt == 1 || (refalt != 0 && folded)) ? SOFOS_FLAG_REFALT : 0;
         return sofos_main(path, alpha, beta, size, zero, flags);
 
@@ -221,7 +221,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
     std::cout << "#alpha=" << alpha << "\n";
     std::cout << "#beta=" << beta << "\n";
     std::cout << "#size=" << size << "\n";
-    std::cout << "#folded=" << ((flags & SOFOS_FLAG_UNFOLDED) ? 0 : 1) << "\n";
+    std::cout << "#folded=" << ((flags & SOFOS_FLAG_FOLDED) ? 1 : 0) << "\n";
     std::cout << "#refalt=" << ((flags & SOFOS_FLAG_REFALT) ? 1 : 0) << "\n";
 
     // Setup for reading from vcf file
@@ -297,7 +297,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
         int n_der = n_total - n_anc;
 
         // Update posterior using observed counts, which may be 0 and 0.
-        if(flags & SOFOS_FLAG_UNFOLDED) {
+        if(!(flags & SOFOS_FLAG_FOLDED)) {
             update_counts(alpha + n_der, beta + n_anc, 1.0, &posterior);
         } else {
             // When calculating the folded spectrum, we can't assume that either
@@ -353,7 +353,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double zer
     update_counts(alpha, beta, nsites+zero, &prior);
 
     // if we are outputting a folded histogram, update the vectors
-    if(!(flags & SOFOS_FLAG_UNFOLDED)) {
+    if(flags & SOFOS_FLAG_FOLDED) {
         fold_histogram(&prior);
         fold_histogram(&bins);
         fold_histogram(&posterior);
