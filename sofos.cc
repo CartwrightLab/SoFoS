@@ -74,6 +74,8 @@ bool g_sofos_quiet=false;
 constexpr unsigned int SOFOS_FLAG_DEFAULT=0;
 constexpr unsigned int SOFOS_FLAG_FOLDED=1;
 constexpr unsigned int SOFOS_FLAG_REFALT=2;
+constexpr unsigned int SOFOS_FLAG_USE_GP=4;
+constexpr unsigned int SOFOS_FLAG_PHRED_GP=8;
 
 // Function and Class Declarations
 int sofos_main(const char *path, double alpha, double beta, int size,
@@ -124,8 +126,10 @@ buffer_t<T> make_buffer(std::size_t sz) {
     return buffer_t<T>{ reinterpret_cast<T*>(p) };
 }
 
-int get_string(const bcf_hdr_t *header, bcf1_t *record,
+int get_info_string(const bcf_hdr_t *header, bcf1_t *record,
     const char *tag, buffer_t<char>* buffer, int *capacity);
+int get_format_float(const bcf_hdr_t *header, bcf1_t *record,
+    const char *tag, buffer_t<float>* buffer, int *capacity);
 
 // Main program entry point
 int main(int argc, char *argv[]) {
@@ -139,10 +143,11 @@ int main(int argc, char *argv[]) {
         int refalt = -1;
         double ploidy = 2;
         double error_rate = 0.0;
+        int use_gp = 0;
 
         // Process program options via getopt
         char c = 0;
-        while((c = getopt(argc, argv, "a:b:n:e:hufrtz:P:qv")) != -1) {
+        while((c = getopt(argc, argv, "a:b:n:e:hufrtpz:P:qv")) != -1) {
             switch(c) {
             case 'a':
                 alpha = std::stod(optarg);
@@ -174,6 +179,9 @@ int main(int argc, char *argv[]) {
             case 't':
                 refalt = 0;
                 break;
+            case 'p':
+                ++use_gp;
+                break;
             case 'q':
                 g_sofos_quiet = true;
                 break;
@@ -201,6 +209,9 @@ int main(int argc, char *argv[]) {
         unsigned int flags = SOFOS_FLAG_DEFAULT;
         flags |= (folded) ? SOFOS_FLAG_FOLDED : 0; 
         flags |= (refalt == 1 || (refalt != 0 && folded)) ? SOFOS_FLAG_REFALT : 0;
+        flags |= (use_gp > 0) ? SOFOS_FLAG_USE_GP : 0;
+        flags |= (use_gp > 1) ? SOFOS_FLAG_PHRED_GP : 0;
+
         return sofos_main(path, alpha, beta, size, error_rate, zero, ploidy, flags);
 
     } catch(std::exception &e) {
@@ -262,6 +273,8 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
     }
     int char_capacity = 64;
     auto char_buffer = make_buffer<char>(char_capacity);
+    int gp_capacity = 10*nsamples;
+    auto gp_buffer = make_buffer<float>(gp_capacity);
 
     // A sample of N copies can have [0,N] derived alleles.
     std::vector<double> posterior(size+1, 0.0);
@@ -288,7 +301,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
         int anc = 0;
         if(!(flags & SOFOS_FLAG_REFALT)) {
             // If REFALT is not specified, use the AA tag
-            int n = get_string(header.get(), record.get(), "AA", &char_buffer, &char_capacity);
+            int n = get_info_string(header.get(), record.get(), "AA", &char_buffer, &char_capacity);
             if(n <= 0) {
                 // missing, unknown, or empty tag
                 continue;
@@ -302,21 +315,40 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
                 }
             }
         }
+        double n_der,n_anc,n_total;
 
-        // Calculate the counts of each allele from the AC/AN tags or directly from GT.
-        // Skip line if it fails
-        ac_buffer.assign(record->n_allele,0.0);
-        if(bcf_calc_ac(header.get(), record.get(), ac_buffer.data(),
-                ac_which) <= 0) {
-            continue;
+        if(!(flags & SOFOS_FLAG_USE_GP)) {
+            // Calculate the counts of each allele from the AC/AN tags or directly from GT.
+            // Skip line if it fails
+            ac_buffer.assign(record->n_allele,0.0);
+            if(bcf_calc_ac(header.get(), record.get(), ac_buffer.data(),
+                    ac_which) <= 0) {
+                continue;
+            }
+            int n = std::accumulate(ac_buffer.begin(), ac_buffer.end(), 0);
+            if(n == 0.0) {
+                continue;
+            }
+            // Number of ancestral copies and derived copies.
+            n_anc = (anc < ac_buffer.size()) ? ac_buffer[anc] : 0;
+            n_der = n - n_anc;
+            n_total = n;
+        } else {
+            throw std::invalid_argument("-p and -pp not yet implmented.");
+            // Calculate counts from GP
+            int n = get_format_float(header.get(), record.get(), "GP", &gp_buffer, &gp_capacity);
+            if(n <= 0) {
+                // missing, unknown, or empty tag
+                continue;
+            }
+            int width = n/nsamples;
+            for(int i=0; i<nsamples; i++) {
+                float *ptr = gp_buffer.get() + i*width;
+                for (int j=0; j<width; j++) {
+                    // TODO
+                }
+            }
         }
-        int n_total = std::accumulate(ac_buffer.begin(), ac_buffer.end(), 0);
-        if(n_total == 0) {
-            continue;
-        }
-        // Number of ancestral copies and derived copies.
-        int n_anc = (anc < ac_buffer.size()) ? ac_buffer[anc] : 0;
-        int n_der = n_total - n_anc;
 
         // Update posterior using observed counts, which may be 0 and 0.
         if(!(flags & SOFOS_FLAG_FOLDED)) {
@@ -417,11 +449,27 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
 // htslib may call realloc on our pointer. When using a managed buffer,
 // we need to check to see if it needs to be updated.
 inline
-int get_string(const bcf_hdr_t *header, bcf1_t *record,
+int get_info_string(const bcf_hdr_t *header, bcf1_t *record,
     const char *tag, buffer_t<char>* buffer, int *capacity)
 {
     char *p = buffer->get();
     int n = bcf_get_info_string(header, record, tag, &p, capacity);
+    if(n == -4) {
+        throw std::bad_alloc{};
+    } else if(p != buffer->get()) {
+        // update pointer
+        buffer->release();
+        buffer->reset(p);
+    }
+    return n;
+}
+
+inline
+int get_format_float(const bcf_hdr_t *header, bcf1_t *record,
+    const char *tag, buffer_t<float>* buffer, int *capacity)
+{
+    float *p = buffer->get();
+    int n = bcf_get_format_float(header, record, tag, &p, capacity);
     if(n == -4) {
         throw std::bad_alloc{};
     } else if(p != buffer->get()) {
