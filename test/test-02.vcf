@@ -1,0 +1,8 @@
+##fileformat=VCFv4.2
+##contig=<ID=1,length=10000>
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
+##INFO=<ID=AA,Number=1,Type=String,Description="Ancestral Allele">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=GP,Number=G,Type=Float,Description="Genotype Posterior">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	NA00001	NA00002	NA00003
+1	1	.	A	T	.	.	AA=A	GT:GP	0/0:0.9,0.1,0.0	0/0:0.9,0.1,0.0	0/1:0.25,0.5,0.25

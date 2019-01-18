@@ -234,6 +234,38 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
 }
 
+// Utility class for handling the combinatorial number system used
+// in format fields with size=G.
+// https://en.wikipedia.org/wiki/Combinatorial_number_system
+class Combinadic {
+public:
+    Combinadic(int ploidy) {
+        Reset(ploidy);
+    }
+
+    // Reset to the lowest k-combination
+    void Reset(int ploidy) {
+        data_ = 0;
+        for(int j = 0; j < ploidy; ++j) {
+            data_ = (data_ << 1) | 1;
+        }
+    }
+
+    // Permute the k-combination to the next highest value
+    void Next() {
+        // Gosper's Hack
+        unsigned long long u = data_ & -data_;
+        unsigned long long v = u + data_;
+        data_ = v + (((v^data_)/u)>>2);
+    }
+
+    // Access an integer representing a k-combination
+    unsigned long long Get() const { return data_; }
+
+protected:
+    unsigned long long data_;
+};
+
 // the main processing function
 int sofos_main(const char *path, double alpha, double beta, int size, double error_rate,
         double zero, double ploidy, unsigned int flags) {
@@ -287,6 +319,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
     auto char_buffer = make_buffer<char>(64);
     auto int_buffer = make_buffer<int32_t>(1);
     auto gp_buffer = make_buffer<float>(3*nsamples);
+    auto gt_buffer = make_buffer<int32_t>(2*nsamples);
 
     // A sample of N copies can have [0,N] derived alleles.
     std::vector<double> posterior(size+1, 0.0);
@@ -294,6 +327,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
 
     // Setup for reading AC tags
     std::vector<int> ac_buffer;
+    std::vector<double> af_buffer;
     int ac_which = BCF_UN_FMT;
     // if AN and AC tags are defined, use them
     if(bcf_hdr_id2int(header.get(), BCF_DT_ID, "AN") >= 0 &&
@@ -341,13 +375,13 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
         if(!(flags & SOFOS_FLAG_USE_GP)) {
             // Calculate the counts of each allele from the AC/AN tags or directly from GT.
             // Skip line if it fails
-            ac_buffer.assign(record->n_allele,0.0);
+            ac_buffer.assign(record->n_allele,0);
             if(bcf_calc_ac(header.get(), record.get(), ac_buffer.data(),
                     ac_which) <= 0) {
                 continue;
             }
             int n = std::accumulate(ac_buffer.begin(), ac_buffer.end(), 0);
-            if(n == 0.0) {
+            if(n == 0) {
                 continue;
             }
             // Number of ancestral copies and derived copies.
@@ -355,20 +389,75 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             n_der = n - n_anc;
             n_total = n;
         } else {
-            throw std::invalid_argument("-p and -pp not yet implemented.");
             // Calculate counts from GP
             int n = get_format_float(header.get(), record.get(), "GP", &gp_buffer);
             if(n <= 0) {
                 // missing, unknown, or empty tag
                 continue;
             }
-            int width = n/nsamples;
-            for(int i=0; i<nsamples; i++) {
-                float *ptr = gp_buffer.data.get() + i*width;
-                for (int j=0; j<width; j++) {
-                    // TODO
+            int gp_width = n/nsamples;
+            // convert GP buffer if needed
+            if(flags & SOFOS_FLAG_PHRED_GP) {
+                for(int i=0;i<n;++i) {
+                    gp_buffer.data[i] = phred_to_p01(gp_buffer.data[i]);
                 }
             }
+
+            // Calculate GT (for ploidy)
+            n = get_genotypes(header.get(), record.get(), &gt_buffer);
+            if(n <= 0) {
+                // missing, unknown, or empty tag
+                continue;
+            }
+            int gt_width = n/nsamples;
+
+            // Allocate vector to estimate allele counts from GP
+            af_buffer.assign(record->n_allele,0.0);
+            for(int i=0; i<nsamples; i++) {
+                // identify ploidy for this sample
+                int *p_gt = gt_buffer.data.get() + i*gt_width;
+                int sample_ploidy=0;
+                for(;sample_ploidy < gt_width; ++sample_ploidy) {
+                    if(p_gt[sample_ploidy] == bcf_int32_vector_end) {
+                        break;
+                    }
+                }
+                // Setup a sequence of k-permutations
+                Combinadic gp_alleles{sample_ploidy};
+                int gp_alleles_sz = record->n_allele + sample_ploidy - 1;
+
+                // Step thorough each element of the gp
+                float *p_gp = gp_buffer.data.get() + i*gp_width;
+                for(int j=0; j < gp_width; ++j, gp_alleles.Next()) {
+                    // check for missing and end values
+                    if(bcf_float_is_vector_end(p_gp[j])) {
+                        break;
+                    }
+                    if(bcf_float_is_missing(p_gp[j])) {
+                        continue;
+                    }
+                    // step through the alleles for this GP
+                    auto alleles = gp_alleles.Get();
+                    int pos = 0;
+                    for(int h=0; h < gp_alleles_sz; ++h) {
+                        // if the lowest bit is 1, we have an allele
+                        // if the lowest bit is 0, we move on to the next allele
+                        if((alleles&0x1) == 1) {
+                            af_buffer[pos] += p_gp[j];
+                        } else {
+                            pos += 1;
+                        }
+                        // shit to the next bit
+                        alleles = alleles >> 1;
+                    }
+                }
+            }
+            n_total = std::accumulate(af_buffer.begin(), af_buffer.end(), 0.0);
+            if(n_total == 0.0) {
+                continue;
+            }
+            n_anc = (anc < af_buffer.size()) ? af_buffer[anc] : 0;
+            n_der = n_total - n_anc;
         }
 
         // Update posterior using observed counts, which may be 0 and 0.
@@ -499,7 +588,6 @@ int get_info_int32(const bcf_hdr_t *header, bcf1_t *record,
     }
     return n;
 }
-
 
 inline
 int get_format_float(const bcf_hdr_t *header, bcf1_t *record,
@@ -632,12 +720,12 @@ void fold_histogram(std::vector<double> *counts) {
 
 inline
 double quality_to_p01(float x) {
-    return -expm1(x*M_LN10/10.0);
+    return -expm1(-x*(M_LN10/10.0));
 }
 
 inline
 double phred_to_p01(float x) {
-    return pow(10,-x/10.0);
+    return exp(-x*(M_LN10/10.0));
 }
 
 inline
@@ -687,4 +775,3 @@ double phred_to_p01(int x) {
     };
     return (x < 96) ? data[x] : 0.0;
 }
-
