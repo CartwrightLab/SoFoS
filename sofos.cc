@@ -20,6 +20,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *****************************************************************************/
 
+#ifdef SOFOS_UNIT_TESTS
+#define CATCH_CONFIG_MAIN
+#include "catch.hpp"
+#endif
+
 #include <memory>
 #include <iostream>
 #include <iomanip>
@@ -145,6 +150,7 @@ double phred_to_p01(float x);
 double phred_to_p01(int x);
 
 // Main program entry point
+#ifndef CATCH_CONFIG_MAIN
 int main(int argc, char *argv[]) {
     try {
         // default parameters
@@ -233,6 +239,7 @@ int main(int argc, char *argv[]) {
     }
     return EXIT_FAILURE;
 }
+#endif
 
 // Utility class for handling the combinatorial number system used
 // in format fields with size=G.
@@ -265,6 +272,29 @@ public:
 protected:
     unsigned long long data_;
 };
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("Combinadic generates the combinatorial number system") {
+    SECTION("Combinadic with ploidy 2") {
+        Combinadic h{2};
+        REQUIRE(h.Get() == 0x3);
+        h.Next();
+        REQUIRE(h.Get() == 0x5);
+        h.Next();
+        REQUIRE(h.Get() == 0x6);        
+    }
+    SECTION("Combinadic with ploidy 3") {
+        Combinadic h{3};
+        REQUIRE(h.Get() == 0x7);
+        h.Next();
+        REQUIRE(h.Get() == 0xb);
+        h.Next();
+        REQUIRE(h.Get() == 0xd);
+        h.Next();
+        REQUIRE(h.Get() == 0xe);
+    }
+}
+#endif
 
 // the main processing function
 int sofos_main(const char *path, double alpha, double beta, int size, double error_rate,
@@ -700,12 +730,56 @@ void update_bins(double a, double b, double weight, std::vector<double> *bins) {
     // bins are from [0,n]
     int n = bins->size()-1;
     double f = a/(a+b)*n;
-    int k = static_cast<int>(f+0.5);
+    int k = lround(f);
     if(k > n) {
         k = n;
     }
     (*bins)[k] += weight;
 }
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("update_bins maps a/(a+b) to a bin in the range of [0,N]/N") {
+    using namespace Catch::literals;
+
+    std::vector<double> bins(4,0.0);
+
+    SECTION("a+b == 0.0") {
+        update_bins(0,0,2,&bins);
+        REQUIRE(bins.size() == 4);
+        CHECK(bins[0] == 0.0);
+        CHECK(bins[1] == 0.0);
+        CHECK(bins[2] == 0.0);
+        CHECK(bins[3] == 0.0);
+    }
+    SECTION("a == 1 && b == 0") {
+        update_bins(1,0,2,&bins);
+        REQUIRE(bins.size() == 4);
+        CHECK(bins[0] == 0.0);
+        CHECK(bins[1] == 0.0);
+        CHECK(bins[2] == 0.0);
+        CHECK(bins[3] == 2.0);
+    }
+    SECTION("a == 0 && b == 1") {
+        update_bins(0,1,2,&bins);
+        REQUIRE(bins.size() == 4);
+        CHECK(bins[0] == 2.0);
+        CHECK(bins[1] == 0.0);
+        CHECK(bins[2] == 0.0);
+        CHECK(bins[3] == 0.0);
+    }
+    SECTION("after many calls") {
+        update_bins(0,1,2,&bins);
+        update_bins(1,0,2,&bins);
+        update_bins(1,2,2,&bins);
+        update_bins(1.1,2,2,&bins);
+        REQUIRE(bins.size() == 4);
+        CHECK(bins[0] == 2.0);
+        CHECK(bins[1] == 4.0);
+        CHECK(bins[2] == 0.0);
+        CHECK(bins[3] == 2.0);
+    }    
+}
+#endif
 
 // folds the histogram so that the second half is added to the first half.
 // handles both odd and even vector sizes.
@@ -717,6 +791,29 @@ void fold_histogram(std::vector<double> *counts) {
     }
     counts->resize((counts->size()+1)/2);
 }
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("fold_histogram folds second half of a vector onto the first") {
+    using namespace Catch::literals;
+    SECTION("fold histogram with even number of elements") {
+        std::vector<double> v = {1,2,3,10,20,30};
+        fold_histogram(&v);
+        REQUIRE(v.size() == 3);
+        CHECK(v[0] == 31.0_a);
+        CHECK(v[1] == 22.0_a);
+        CHECK(v[2] == 13.0_a);
+    }
+    SECTION("fold histogram with odd number of elements") {
+        std::vector<double> v = {1,2,3,10,20};
+        fold_histogram(&v);
+        REQUIRE(v.size() == 3);
+        CHECK(v[0] == 21.0_a);
+        CHECK(v[1] == 12.0_a);
+        CHECK(v[2] == 3.0_a);
+    }
+}
+#endif
+
 
 inline
 double quality_to_p01(float x) {
@@ -775,3 +872,47 @@ double phred_to_p01(int x) {
     };
     return (x < 96) ? data[x] : 0.0;
 }
+
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("quality_to_p01 converts a quality value to a [0,1] value.") {
+    using namespace Catch::literals;
+    SECTION("quality_to_p01(int)") {
+        CHECK(quality_to_p01(0)  == 0.0_a);
+        CHECK(quality_to_p01(10) == 0.9_a);
+        CHECK(quality_to_p01(20) == 0.99_a);
+        CHECK(quality_to_p01(30) == 0.999_a);
+        CHECK(quality_to_p01(40) == 0.9999_a);
+        CHECK(quality_to_p01(255) == 1.0_a);
+    }
+    SECTION("quality_to_p01(double)") {
+        CHECK(quality_to_p01(0.0f)  == 0.0_a);
+        CHECK(quality_to_p01(10.0f) == 0.9_a);
+        CHECK(quality_to_p01(20.0f) == 0.99_a);
+        CHECK(quality_to_p01(30.0f) == 0.999_a);
+        CHECK(quality_to_p01(40.0f) == 0.9999_a);
+        CHECK(quality_to_p01(255.0f) == 1.0_a);
+    }
+}
+
+TEST_CASE("phred_to_p01 converts a phred value to a [0,1] value.") {
+    using namespace Catch::literals;
+    auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon()*100);
+    SECTION("phred_to_p01(int)") {
+        CHECK(phred_to_p01(0)  == 1.0_a);
+        CHECK(phred_to_p01(10) == 0.1_a);
+        CHECK(phred_to_p01(20) == 0.01_a);
+        CHECK(phred_to_p01(30) == 0.001_a);
+        CHECK(phred_to_p01(40) == 0.0001_a);
+        CHECK(phred_to_p01(255) == zero);
+    }
+    SECTION("phred_to_p01(double)") {
+        CHECK(phred_to_p01(0.0f)  == 1.0_a);
+        CHECK(phred_to_p01(10.0f) == 0.1_a);
+        CHECK(phred_to_p01(20.0f) == 0.01_a);
+        CHECK(phred_to_p01(30.0f) == 0.001_a);
+        CHECK(phred_to_p01(40.0f) == 0.0001_a);
+        CHECK(phred_to_p01(255.0f) == zero);
+    }    
+}
+#endif
