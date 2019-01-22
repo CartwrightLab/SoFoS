@@ -1,15 +1,3 @@
-Rscript --vanilla vcfsim.R -a 0.1 -b 1 -m 10000 -n 10 -z 514803703 | bgzip > sim01.vcf.gz
-bcftools query -l sim01.vcf.gz | head -n 8 > samples1.txt
-bcftools query -l sim01.vcf.gz | tail -n 2 > samples2.txt
-bcftools view -S samples1.txt sim01.vcf.gz | bcftools +fill-tags -- -t AC,AN > sim01-sample1.vcf
-bcftools view -S samples2.txt sim01.vcf.gz | bcftools +fill-tags -- -t AC,AN > sim01-sample2.vcf
-../sofos -u -r -n 4 -a 0.1 -b 1 sim01-sample1.vcf > sim01-sample1.txt
-../sofos -u -r -n 16 -a 0.1 -b 1 sim01-sample2.vcf > sim01-sample2.txt
-
-bcftools query -f '%AC\n' sim01-sample1.vcf > sim01-sample1-ac.txt
-bcftools query -f '%AC\n' sim01-sample2.vcf > sim01-sample2-ac.txt
-
-
 library(tidyverse)
 
 data1 = read_csv("sofos-sample1.txt",comment="#")
