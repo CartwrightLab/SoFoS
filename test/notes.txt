@@ -1,14 +1,21 @@
 Rscript --vanilla vcfsim.R -a 0.1 -b 1 -m 100000 -n 10 > sim01.vcf
-bcftools query -l sim01.vcf | head -n 5 > samples1.txt
-bcftools query -l sim01.vcf | tail -n 5 > samples2.txt
-bcftools view -S samples1.txt sim01.vcf | bcftools +fill-tags -- -t AC,AN > sim01-sample1.txt
-bcftools view -S samples2.txt sim01.vcf | bcftools +fill-tags -- -t AC,AN > sim01-sample2.txt
-../sofos -u -r -n 10 -a 0.1 -b 1 sim01-sample1.txt > sofos-sample1.txt
-../sofos -u -r -n 10 -a 0.1 -b 1 sim01-sample2.txt > sofos-sample2.txt
+bcftools query -l sim01.vcf | head -n 8 > samples1.txt
+bcftools query -l sim01.vcf | tail -n 2 > samples2.txt
+bcftools view -S samples1.txt sim01.vcf | bcftools +fill-tags -- -t AC,AN > sim01-sample1.vcf
+bcftools view -S samples2.txt sim01.vcf | bcftools +fill-tags -- -t AC,AN > sim01-sample2.vcf
+../sofos -u -r -n 4 -a 0.1 -b 1 sim01-sample1.vcf > sofos-sample1.txt
+../sofos -u -r -n 16 -a 0.1 -b 1 sim01-sample2.vcf > sofos-sample2.txt
 
+bcftools query -f '%AC\n' sim01-sample1.vcf > sim01-sample1-ac.txt
+bcftools query -f '%AC\n' sim01-sample2.vcf > sim01-sample2-ac.txt
+
+
+library(tidyverse)
 
 data1 = read_csv("sofos-sample1.txt",comment="#")
 data2 = read_csv("sofos-sample2.txt",comment="#")
+ac1 = scan("sim01-sample1-ac.txt") %>% table()
+ac2 = scan("sim01-sample2-ac.txt") %>% table()
 
-chisq.test(data1$Observed,p=data2$Posterior,rescale.p=TRUE)
-chisq.test(data2$Observed,p=data1$Posterior,rescale.p=TRUE)
+chisq.test(ac1,p=data2$Posterior,rescale.p=TRUE)
+chisq.test(ac2,p=data1$Posterior,rescale.p=TRUE)
