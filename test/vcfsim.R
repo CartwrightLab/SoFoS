@@ -60,11 +60,16 @@ if(!interactive()) {
     library('getopt')
     spec = matrix(c(
         'num_sites','m',1,'integer',
-        'pop_size','n',1,'integer',
-        'param_a','a',1,'double',
-        'param_b','b',1,'double'
+        'pop_size', 'n',1,'integer',
+        'param_a',  'a',1,'double',
+        'param_b',  'b',1,'double',
+        'seed',     'z',1,'integer'
     ),byrow=TRUE,ncol=4)
     opt = getopt(spec)
+
+    if(!is.null(opt$seed)) {
+        set.seed(opt$seed)
+    }
 
     # Run simulation and print output
     data = pop_sim(opt$num_sites, 2*opt$pop_size, opt$param_a, opt$param_b)
