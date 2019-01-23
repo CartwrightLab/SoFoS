@@ -1,5 +1,5 @@
 /*****************************************************************************
-Copyright (c) 2018 Reed A. Cartwright, PhD <reed@cartwrig.ht>
+Copyright (c) 2019 Reed A. Cartwright, PhD <reed@cartwrig.ht>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,7 +25,11 @@ SOFTWARE.
 #include "catch.hpp"
 #endif
 
-#include <memory>
+#include <unistd.h>
+
+#include "sofos.hpp"
+#include "vcf.hpp"
+
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -35,211 +39,14 @@ SOFTWARE.
 #include <chrono>
 #include <numeric>
 
-#include <unistd.h>
-
-#include <htslib/vcf.h>
-#include <htslib/vcfutils.h>
-
-// print a usage message for sofos
-void print_usage(const char* exe, std::ostream& os) {
-    const char* p = strrchr(exe, '/');
-    if(p != nullptr && p[0] != '\0' && p[1] != '\0') {
-        exe = p+1;
-    }
-    os << "Usage: " << exe << " [OPTION]... [FILE] > [OUTPUT]\n"
-    "Rescale genetic polymorphism data to match a common sample size.\n"
-    "\n"
-    "With no FILE or when FILE is -, read standard input.\n"
-    "\n"
-    "  -a number -b number  shape parameters of beta prior\n"
-    "  -n integer           number of gene copies in posterior resample\n"
-    "  -f -u                generated (f)olded or (u)nfolded distributions\n"
-    "  -t -r                use AA (t)ag or (r)eference allele as ancestral\n"
-    "  -e number            probability of ancestral allele misassignment\n"
-    "  -p [or] -pp          use GP tag to estimate allele frequencies\n"
-    "  -z number            add extra invariant sites to manage ascertainment bias\n"
-    "  -P number            average ploidy of samples (used with -z)\n"
-    "  -q -v                (q)uiet progress info or be (v)erbose\n"
-    "  -h                   print usage information\n"
-    "\n"
-    "Default: " << exe << " -f -a 1.0 -b 1.0 -n 9\n"
-    "Notes: Unless otherwise stated -f enables -r and -u enables -t.\n"
-    "       -p specifies that GP contains probabilities in the range 0 and 1.\n"
-    "       -pp specifies that GP contains phred-scaled probabilities.\n"
-    "       -e is only used when generating unfolded spectra.\n"
-    "\n"
-    "Copyright (c) 2018 Reed A. Cartwright, PhD <reed@cartwrig.ht>\n"
-    "\n";
-}
-
-// Globals
-bool g_sofos_quiet=false;
-
-// Flags used to control sofos_main
-constexpr unsigned int SOFOS_FLAG_DEFAULT=0;
-constexpr unsigned int SOFOS_FLAG_FOLDED=1;
-constexpr unsigned int SOFOS_FLAG_REFALT=2;
-constexpr unsigned int SOFOS_FLAG_USE_GP=4;
-constexpr unsigned int SOFOS_FLAG_PHRED_GP=8;
-
-// Function and Class Declarations
-int sofos_main(const char *path, double alpha, double beta, int size,
-    double error_rate,
-    double zero, double ploidy,
-    unsigned int flags=SOFOS_FLAG_DEFAULT);
+bool g_sofos_quiet = false;
 
 std::pair<std::string, std::string> timestamp();
-bool is_ref_missing(bcf1_t* record);
-bool is_allele_missing(const char* a);
-void update_counts(double a, double b, double weight, std::vector<double> *counts);
-void update_bins(double a, double b, double weight, std::vector<double> *counts);
-void fold_histogram(std::vector<double> *counts);
-
-// The *_free_t classes are used enable RAII on pointers created by htslib.
-struct buffer_free_t {
-    void operator()(void* ptr) const {
-        free(ptr);
-    }
-};
-struct file_free_t{
-    void operator()(void* ptr) const {
-        vcf_close(reinterpret_cast<vcfFile*>(ptr));
-    }
-};
-struct header_free_t{
-    void operator()(void* ptr) const {
-        bcf_hdr_destroy(reinterpret_cast<bcf_hdr_t*>(ptr));
-    }
-};
-struct bcf_free_t {
-    void operator()(void* ptr) const {
-        bcf_destroy(reinterpret_cast<bcf1_t*>(ptr));
-    }
-};
-
-// Templates and functions for handling buffers used by htslib
-template<typename T>
-struct buffer_t {
-    std::unique_ptr<T[],buffer_free_t> data;
-    int capacity;
-};
-
-template<typename T>
-inline
-buffer_t<T> make_buffer(int sz) {
-    void *p = std::malloc(sizeof(T)*sz);
-    if(p == nullptr) {
-        throw std::bad_alloc{};
-    }
-    return {std::unique_ptr<T[],buffer_free_t>{reinterpret_cast<T*>(p)}, sz};
-}
-
-int get_info_string(const bcf_hdr_t *header, bcf1_t *record,
-    const char *tag, buffer_t<char>* buffer);
-int get_info_int32(const bcf_hdr_t *header, bcf1_t *record,
-    const char *tag, buffer_t<int32_t>* buffer);
-
-int get_format_float(const bcf_hdr_t *header, bcf1_t *record,
-    const char *tag, buffer_t<float>* buffer);
-int get_genotypes(const bcf_hdr_t *header, bcf1_t *record,
-    buffer_t<int32_t>* buffer);
 
 double quality_to_p01(int x);
 double quality_to_p01(float x);
 double phred_to_p01(float x);
 double phred_to_p01(int x);
-
-// Main program entry point
-#ifndef CATCH_CONFIG_MAIN
-int main(int argc, char *argv[]) {
-    try {
-        // default parameters
-        double alpha = 1.0;
-        double beta = 1.0;
-        double zero = 0.0;
-        int size = 9;
-        bool folded = true;
-        int refalt = -1;
-        double ploidy = 2;
-        double error_rate = 0.0;
-        int use_gp = 0;
-
-        // Process program options via getopt
-        char c = 0;
-        while((c = getopt(argc, argv, "a:b:n:e:hufrtpz:P:qv")) != -1) {
-            switch(c) {
-            case 'a':
-                alpha = std::stod(optarg);
-                break;
-            case 'b':
-                beta = std::stod(optarg);
-                break;
-            case 'n':
-                size =  std::stoi(optarg);
-                break;
-            case 'e':
-                error_rate = std::stod(optarg);
-                break;
-            case 'z':
-                zero = std::stod(optarg);
-                break;
-            case 'P':
-                ploidy = std::stod(optarg);
-                break;
-            case 'u':
-                folded = false;
-                break;
-            case 'f':
-                folded = true;
-                break;
-            case 'r':
-                refalt = 1;
-                break;
-            case 't':
-                refalt = 0;
-                break;
-            case 'p':
-                ++use_gp;
-                break;
-            case 'q':
-                g_sofos_quiet = true;
-                break;
-            case 'v':
-                g_sofos_quiet = false;
-                break;
-            case 'h':
-                print_usage(argv[0], std::cout);
-                return EXIT_SUCCESS;
-            case '?':
-                print_usage(argv[0], std::cerr);
-                return EXIT_FAILURE;                
-            };
-        }
-        // read input from a file or fall back to stdin
-        const char *path = nullptr;
-        if(optind == argc) {
-            path = "-";
-        } else if(optind+1 == argc) {
-            path = argv[optind];
-        } else {
-            throw std::invalid_argument("more than one input file was specified.");
-        }
-        // Setup flags for sofos_main
-        unsigned int flags = SOFOS_FLAG_DEFAULT;
-        flags |= (folded) ? SOFOS_FLAG_FOLDED : 0; 
-        flags |= (refalt == 1 || (refalt != 0 && folded)) ? SOFOS_FLAG_REFALT : 0;
-        flags |= (use_gp > 0) ? SOFOS_FLAG_USE_GP : 0;
-        flags |= (use_gp > 1) ? SOFOS_FLAG_PHRED_GP : 0;
-
-        return sofos_main(path, alpha, beta, size, error_rate, zero, ploidy, flags);
-
-    } catch(std::exception &e) {
-        // If an exception is thrown, print it to stderr.
-        std::cerr << "ERROR: " << e.what() << std::endl;
-    }
-    return EXIT_FAILURE;
-}
-#endif
 
 // Utility class for handling the combinatorial number system used
 // in format fields with size=G.
@@ -351,9 +158,8 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
     auto gp_buffer = make_buffer<float>(3*nsamples);
     auto gt_buffer = make_buffer<int32_t>(2*nsamples);
 
-    // A sample of N copies can have [0,N] derived alleles.
-    std::vector<double> posterior(size+1, 0.0);
-    std::vector<double> bins(size+1, 0.0);
+    // Construct Histogram
+    SofosHistogram histogram{size, alpha, beta};
 
     // Setup for reading AC tags
     std::vector<int> ac_buffer;
@@ -490,38 +296,24 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             n_der = n_total - n_anc;
         }
 
-        // Update posterior using observed counts, which may be 0 and 0.
-        if(!(flags & SOFOS_FLAG_FOLDED)) {
-            if(local_error_rate == 0.0) {
-                update_counts(alpha + n_der, beta + n_anc, 1.0, &posterior);
-                // Update the observed bins based on observed counts, skipping 0 and 0.
-                // This maps the observed frequency onto a bin based on size.
-                update_bins(n_der, n_anc, 1.0, &bins);
-            } else {
-                // If there is some level of uncertainty about the ancestral allele,
-                // weight the two possibilities.
-                // anc is ancestral
-                update_counts(alpha + n_der, beta + n_anc, 1.0-local_error_rate, &posterior);
-                // der is ancestral
-                update_counts(alpha + n_anc, beta + n_der, local_error_rate, &posterior);
-
-                update_bins(n_der, n_anc, 1.0-error_rate, &bins);
-                update_bins(n_anc, n_der, error_rate, &bins);
-            }
-        } else {
+        if(flags & SOFOS_FLAG_FOLDED) {
             // When calculating the folded spectrum, we can't assume that either
             // allele is ancestral. Thus we will update the posterior weighted
             // by the possibility of each occurrence.
-            // The probability that an allele is ancestral is its frequency.
+            // The probability that an der is ancestral is its frequency.
+            local_error_rate = (1.0*n_der)/n_total;
+        }
 
-            double f = (1.0*n_der)/n_total;
-            // der is ancestral
-            update_counts(alpha + n_anc, beta + n_der, f, &posterior);
-            // anc is ancestral
-            update_counts(alpha + n_der, beta + n_anc, 1.0-f, &posterior);
-
-            update_bins(n_anc, n_der, f, &bins);
-            update_bins(n_der, n_anc, 1.0-f, &bins);
+        // Update Posterior and Observed using observed counts
+        if(!(flags & SOFOS_FLAG_FOLDED)) {
+            if(local_error_rate == 0.0) {
+                histogram.AddCounts(n_der, n_anc, 1.0);
+            } else {
+                // If there is some level of uncertainty about the ancestral allele,
+                // weight the two possibilities.
+                histogram.AddCounts(n_der, n_anc, 1.0-local_error_rate);
+                histogram.AddCounts(n_anc, n_der, local_error_rate);
+            }
         }
 
         // Increment the number of observed sites.
@@ -552,19 +344,15 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
 
     // Add zero-count sites (for controlling ascertainment bias)
     if(zero > 0.0) {
-        update_counts(alpha, beta+ploidy*nsamples, zero, &posterior);
-        update_bins(0, ploidy*nsamples, zero, &bins);
+        histogram.AddCounts(0.0, ploidy*nsamples, zero);
     }
 
     // calculate prior assuming no data
-    std::vector<double> prior(posterior.size(), 0.0);
-    update_counts(alpha, beta, nsites+zero, &prior);
+    histogram.CalculatePrior();
 
-    // if we are outputting a folded histogram, update the vectors
+    // fold histogram if necessary
     if(flags & SOFOS_FLAG_FOLDED) {
-        fold_histogram(&prior);
-        fold_histogram(&bins);
-        fold_histogram(&posterior);
+        histogram.Fold();
     }
 
     // spacer
@@ -573,107 +361,16 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
     // output resulting scale
     std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
     std::cout << "Number,Prior,Observed,Posterior\n";
-    for(int i=0;i<posterior.size();++i) {
+    for(int i=0;i< histogram.posterior().size();++i) {
         std::cout << i
-                  << "," << prior[i]
-                  << "," << bins[i]
-                  << "," << posterior[i]
+                  << "," << histogram.prior()[i]
+                  << "," << histogram.observed()[i]
+                  << "," << histogram.posterior()[i]
                   << "\n";
     }
     std::cout << std::flush;
     
     return EXIT_SUCCESS;
-}
-
-// htslib may call realloc on our pointer. When using a managed buffer,
-// we need to check to see if it needs to be updated.
-inline
-int get_info_string(const bcf_hdr_t *header, bcf1_t *record,
-    const char *tag, buffer_t<char>* buffer)
-{
-    char *p = buffer->data.get();
-    int n = bcf_get_info_string(header, record, tag, &p, &buffer->capacity);
-    if(n == -4) {
-        throw std::bad_alloc{};
-    } else if(p != buffer->data.get()) {
-        // update pointer
-        buffer->data.release();
-        buffer->data.reset(p);
-    }
-    return n;
-}
-
-inline
-int get_info_int32(const bcf_hdr_t *header, bcf1_t *record,
-    const char *tag, buffer_t<int32_t>* buffer)
-{
-    int32_t *p = buffer->data.get();
-    int n = bcf_get_info_int32(header, record, tag, &p, &buffer->capacity);
-    if(n == -4) {
-        throw std::bad_alloc{};
-    } else if(p != buffer->data.get()) {
-        // update pointer
-        buffer->data.release();
-        buffer->data.reset(p);
-    }
-    return n;
-}
-
-inline
-int get_format_float(const bcf_hdr_t *header, bcf1_t *record,
-    const char *tag, buffer_t<float>* buffer)
-{
-    float *p = buffer->data.get();
-    int n = bcf_get_format_float(header, record, tag, &p, &buffer->capacity);
-    if(n == -4) {
-        throw std::bad_alloc{};
-    } else if(p != buffer->data.get()) {
-        // update pointer
-        buffer->data.release();
-        buffer->data.reset(p);
-    }
-    return n;
-}
-
-inline
-int get_genotypes(const bcf_hdr_t *header, bcf1_t *record,
-    buffer_t<int32_t>* buffer)
-{
-    int32_t *p = buffer->data.get();
-    int n = bcf_get_genotypes(header, record, &p, &buffer->capacity);
-    if(n == -4) {
-        throw std::bad_alloc{};
-    } else if(p != buffer->data.get()) {
-        // update pointer
-        buffer->data.release();
-        buffer->data.reset(p);
-    }
-    return n;
-}
-
-// an allele is missing if its value is '.', 'N', or 'n'.
-inline
-bool is_allele_missing(const char* a) {
-    if(a == nullptr) {
-        return true;
-    }
-    if(a[0] == '\0') {
-        return true;
-    }
-    if((a[0] == '.' || a[0] == 'N' || a[0] == 'n') && a[1] == '\0') {
-        return true;
-    }
-    return false;
-}
-
-// determine if the reference allele is missing
-inline
-bool is_ref_missing(bcf1_t* record) {
-    if(record->n_allele == 0) {
-        return true;
-    }
-    bcf_unpack(record, BCF_UN_STR);
-    return is_allele_missing(record->d.allele[0]);
 }
 
 // Generate a timestamp. Returns an ISO formatted timestring
@@ -814,7 +511,6 @@ TEST_CASE("fold_histogram folds second half of a vector onto the first") {
 }
 #endif
 
-
 inline
 double quality_to_p01(float x) {
     return -expm1(-x*(M_LN10/10.0));
@@ -916,3 +612,7 @@ TEST_CASE("phred_to_p01 converts a phred value to a [0,1] value.") {
     }    
 }
 #endif
+
+
+
+

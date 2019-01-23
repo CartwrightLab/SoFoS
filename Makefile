@@ -13,19 +13,22 @@ all: sofos
 .PHONY: default all clean
 
 clean:
-	rm -f sofos
+	rm -f sofos sofos_debug sofos_test sofos_test_coverage
 
-sofos: sofos.cc
-	$(CXX) $(CXXFLAGS) $(SOFOSFLAGS) -o $@ $^
+SOFOSCC=sofos.cc main.cc
+SOFOSHPP=sofos.hpp vcf.hpp
 
-sofos_debug: sofos.cc
-	$(CXX) -g -O0 $(SOFOSFLAGS) -o $@ $^
+sofos: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) $(CXXFLAGS) $(SOFOSFLAGS) -o $@ $(SOFOSCC)
 
-sofos_test: sofos.cc
-	$(CXX) -g -O0 $(SOFOSFLAGS) -DSOFOS_UNIT_TESTS -o $@ $^
+sofos_debug: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) -g -O0 $(SOFOSFLAGS) -o $@ $(SOFOSCC)
 
-sofos_test_coverage: sofos.cc
-	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $^
+sofos_test: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) -g -O0 $(SOFOSFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
+
+sofos_test_coverage: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
 
 test: sofos_test
 	./sofos_test
