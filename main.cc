@@ -71,14 +71,10 @@ void print_usage(const char* exe, std::ostream& os) {
 int main(int argc, char *argv[]) {
     try {
         // default parameters
-        double alpha = 1.0;
-        double beta = 1.0;
-        double zero = 0.0;
-        int size = 9;
-        bool folded = true;
+        sofos_params_t params;
+
         int refalt = -1;
-        double ploidy = 2;
-        double error_rate = 0.0;
+                
         int use_gp = 0;
 
         // Process program options via getopt
@@ -86,28 +82,28 @@ int main(int argc, char *argv[]) {
         while((c = getopt(argc, argv, "a:b:n:e:hufrtpz:P:qv")) != -1) {
             switch(c) {
             case 'a':
-                alpha = std::stod(optarg);
+                params.alpha = std::stod(optarg);
                 break;
             case 'b':
-                beta = std::stod(optarg);
+                params.beta = std::stod(optarg);
                 break;
             case 'n':
-                size =  std::stoi(optarg);
+                params.size =  std::stoi(optarg);
                 break;
             case 'e':
-                error_rate = std::stod(optarg);
+                params.error_rate = std::stod(optarg);
                 break;
             case 'z':
-                zero = std::stod(optarg);
+                params.zero_count = std::stod(optarg);
                 break;
             case 'P':
-                ploidy = std::stod(optarg);
+                params.ploidy = std::stod(optarg);
                 break;
             case 'u':
-                folded = false;
+                params.flag_folded = false;
                 break;
             case 'f':
-                folded = true;
+                params.flag_folded = true;
                 break;
             case 'r':
                 refalt = 1;
@@ -132,23 +128,29 @@ int main(int argc, char *argv[]) {
                 return EXIT_FAILURE;                
             };
         }
-        // read input from a file or fall back to stdin
-        const char *path = nullptr;
-        if(optind == argc) {
-            path = "-";
-        } else if(optind+1 == argc) {
-            path = argv[optind];
-        } else {
-            throw std::invalid_argument("more than one input file was specified.");
-        }
         // Setup flags for sofos_main
-        unsigned int flags = SOFOS_FLAG_DEFAULT;
-        flags |= (folded) ? SOFOS_FLAG_FOLDED : 0; 
-        flags |= (refalt == 1 || (refalt != 0 && folded)) ? SOFOS_FLAG_REFALT : 0;
-        flags |= (use_gp > 0) ? SOFOS_FLAG_USE_GP : 0;
-        flags |= (use_gp > 1) ? SOFOS_FLAG_PHRED_GP : 0;
+        params.flag_refalt = (refalt == 1 || (refalt != 0 && params.flag_folded));
+        params.flag_use_gp = (use_gp > 0);
+        params.flag_phred_gp = (use_gp > 1);
 
-        return sofos_main(path, alpha, beta, size, error_rate, zero, ploidy, flags);
+        Sofos sofos{params};
+
+        // read input from a file or fall back to stdin
+        std::vector<const char*> paths(argv+optind, argv+argc);
+        if(paths.empty()) {
+            paths.push_back("-");            
+        }
+
+        output_header(std::cout, sofos, paths);
+
+        for(auto && path : paths) {
+            sofos.RescaleFile(path);
+        }
+        sofos.FinishHistogram();
+
+        output_body(std::cout, sofos);
+
+        return EXIT_SUCCESS;
 
     } catch(std::exception &e) {
         // If an exception is thrown, print it to stderr.

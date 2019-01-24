@@ -23,8 +23,12 @@ SOFTWARE.
 #ifndef SOFOS_SOFOS_HPP
 #define SOFOS_SOFOS_HPP
 
+#include "vcf.hpp"
+
 #include <vector>
 #include <numeric>
+#include <cassert>
+#include <ostream>
 
 // Globals
 extern bool g_sofos_quiet;
@@ -36,11 +40,20 @@ constexpr unsigned int SOFOS_FLAG_REFALT=2;
 constexpr unsigned int SOFOS_FLAG_USE_GP=4;
 constexpr unsigned int SOFOS_FLAG_PHRED_GP=8;
 
-// Function and Class Declarations
-int sofos_main(const char *path, double alpha, double beta, int size,
-    double error_rate,
-    double zero, double ploidy,
-    unsigned int flags=SOFOS_FLAG_DEFAULT);
+struct sofos_params_t {
+    double alpha{1.0};
+    double beta{1.0};
+    int    size{9};
+    double error_rate{0.0};
+    double zero_count{0.0};
+    double ploidy{2.0};
+
+    bool flag_folded{false};
+    bool flag_refalt{false};
+    bool flag_use_gp{false};
+    bool flag_phred_gp{false};
+
+};
 
 void update_counts(double a, double b, double weight, std::vector<double> *counts);
 void update_bins(double a, double b, double weight, std::vector<double> *counts);
@@ -70,12 +83,60 @@ private:
     std::vector<double> prior_;
     std::vector<double> observed_;
     std::vector<double> posterior_;
+
+};
+
+class Sofos {
+public:
+    Sofos(const sofos_params_t& params) : params_{params},
+        histogram_{params.size, params.alpha, params.beta}
+    {
+        assert(0.0 <= params.error_rate && params.error_rate <= 1.0);
+        assert(params.zero_count >= 0.0);
+        assert(params.ploidy >= 0.0);
+
+        char_buffer_ = make_buffer<char>(64);
+        int_buffer_ = make_buffer<int32_t>(1);
+    }
+
+    void RescaleFile(const char *path);
+
+    void ResetHistogram() {
+        histogram_.ZeroCounts();
+    }
+
+    void FinishHistogram();
+
+    const SofosHistogram histogram() const { return histogram_; }
+
+protected:
+    std::pair<int,double> GetAncestor(bcf1_t *record, const bcf_hdr_t *header);
+
+    // This is a template in case SofosHistogram::AddCounts becomes an overloaded function
+    template<typename T>
+    void AddCounts(const std::vector<T> &counts, int anc, double error_rate);
+
+private:
+    sofos_params_t params_;
+
+    SofosHistogram histogram_;
+
+    buffer_t<char> char_buffer_;
+    buffer_t<int32_t> int_buffer_;
+
+public:
+    friend void output_header(std::ostream &os, const Sofos &sofos,
+        const std::vector<const char *> &paths);
+    friend void output_body(std::ostream &os, const Sofos &sofos);
 };
 
 inline
 SofosHistogram::SofosHistogram(int size, double alpha, double beta) :
     size_{size}, alpha_{alpha}, beta_{beta}
 {
+    assert(size > 0);
+    assert(alpha > 0.0 && beta > 0.0);
+
     ZeroCounts();
 }
 
@@ -105,6 +166,35 @@ void SofosHistogram::Fold() {
     fold_histogram(&prior_);
     fold_histogram(&observed_);
     fold_histogram(&posterior_);
+}
+
+template<typename T>
+void Sofos::AddCounts(const std::vector<T> &counts, int anc, double error_rate) {
+    auto n_total = std::accumulate(counts.begin(), counts.end(), T{0});
+    if(n_total == T{0}) {
+        return;
+    }
+    // Number of ancestral copies and derived copies.
+    auto n_anc = (anc < counts.size()) ? counts[anc] : T{0};
+    auto n_der = n_total - n_anc;
+
+    if(params_.flag_folded) {
+        // When calculating the folded spectrum, we can't assume that either
+        // allele is ancestral. Thus we will update the posterior weighted
+        // by the possibility of each occurrence.
+        // The probability that an der is ancestral is its frequency.
+        error_rate = static_cast<double>(n_der)/n_total;
+    }
+
+    // Update Posterior and Observed using observed counts
+    if(error_rate == 0.0) {
+        histogram_.AddCounts(n_der, n_anc, 1.0);
+    } else {
+        // If there is some level of uncertainty about the ancestral allele,
+        // weight the two possibilities.
+        histogram_.AddCounts(n_der, n_anc, 1.0-error_rate);
+        histogram_.AddCounts(n_anc, n_der, error_rate);
+    }
 }
 
 #endif // SOFOS_SOFOS_HPP

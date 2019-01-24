@@ -41,6 +41,8 @@ SOFTWARE.
 
 bool g_sofos_quiet = false;
 
+bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer);
+
 std::pair<std::string, std::string> timestamp();
 
 double quality_to_p01(int x);
@@ -103,117 +105,76 @@ TEST_CASE("Combinadic generates the combinatorial number system") {
 }
 #endif
 
-// the main processing function
-int sofos_main(const char *path, double alpha, double beta, int size, double error_rate,
-        double zero, double ploidy, unsigned int flags) {
+class ProgressMessage {
+public:
+	ProgressMessage(std::ostream& os, int step) : step_{step}, next_{step}, output_{os} {
+		start_ = std::chrono::steady_clock::now();
+	}
+
+	template<typename call_back_t>
+	void operator()(call_back_t call_back, bool force=false);
+
+protected:
+	std::ostream& output_;
+	int step_;
+	int next_;
+
+	decltype(std::chrono::steady_clock::now()) start_;
+};
+
+void Sofos::RescaleFile(const char *path) {
     assert(path != nullptr);
-    assert(alpha > 0.0 && beta > 0.0);
-    assert(size > 0);
-    assert(0.0 <= error_rate && error_rate <= 1.0);
-    assert(zero >= 0.0);
-    assert(ploidy >= 0.0);
 
     // open the input file or throw on error
     BcfReader reader{path};
 
-    // Output header including program runtime information and options
-    auto stamp = timestamp();
-    std::cout << "#SoFoS v2.0\n";
-    std::cout << "#date=" << stamp.first << "\n";
-    std::cout << "#epoch=" << stamp.second << "\n";
-
-    std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
-    std::cout << "#path=" << path << "\n";
-    std::cout << "#alpha=" << alpha << "\n";
-    std::cout << "#beta=" << beta << "\n";
-    std::cout << "#size=" << size << "\n";
-    if(error_rate > 0.0) {
-        std::cout << "#error_rate=" << error_rate << "\n";
-    }
-    std::cout << "#folded=" << ((flags & SOFOS_FLAG_FOLDED) ? 1 : 0) << "\n";
-    std::cout << "#refalt=" << ((flags & SOFOS_FLAG_REFALT) ? 1 : 0) << "\n";
-    if(zero > 0.0) {
-        std::cout << "#zero=" << zero << "\n";
-        std::cout << "#ploidy=" << ploidy << "\n";
-    }
     // Setup for reading from vcf file
-    auto header_ptr = reader.header();
+    std::vector<int> ac_buffer;
+    std::vector<double> af_buffer;
 
-    size_t nsamples = bcf_hdr_nsamples(header_ptr);
+    size_t nsamples = bcf_hdr_nsamples(reader.header());
     if(nsamples <= 0) {
-        throw std::invalid_argument("input vcf has no samples.");
+        throw std::invalid_argument("input variant file has no samples.");
     }
-    auto char_buffer = make_buffer<char>(64);
-    auto int_buffer = make_buffer<int32_t>(1);
     auto gp_buffer = make_buffer<float>(3*nsamples);
     auto gt_buffer = make_buffer<int32_t>(2*nsamples);
 
-    // Construct Histogram
-    SofosHistogram histogram{size, alpha, beta};
+
 
     // Setup for reading AC tags
-    std::vector<int> ac_buffer;
-    std::vector<double> af_buffer;
     int ac_which = BCF_UN_FMT;
     // if AN and AC tags are defined, use them
-    if(bcf_hdr_id2int(header_ptr, BCF_DT_ID, "AN") >= 0 &&
-       bcf_hdr_id2int(header_ptr, BCF_DT_ID, "AC") >= 0 ) {
+    if(bcf_hdr_id2int(reader.header(), BCF_DT_ID, "AN") >= 0 &&
+       bcf_hdr_id2int(reader.header(), BCF_DT_ID, "AC") >= 0 ) {
         ac_which |= BCF_UN_INFO;
     }
 
     // begin timer
-    auto start = std::chrono::steady_clock::now();
-    auto last = start;
+    ProgressMessage progress{std::cerr, 60};
 
     // begin reading from the input file
     size_t nsites = 0;
-    reader([&](bcf1_t *record, const bcf_hdr_t *header){
-        // Make a copy of error_rate because we may update it.
-        double local_error_rate = error_rate;
-        // identify which allele is ancestral
-        // if REFALT is specified, assume 0 is the ancestral allele.
-        int anc = 0;
-        if(!(flags & SOFOS_FLAG_REFALT)) {
-            // If REFALT is not specified, use the AA tag
-            int n = get_info_string(header, record, "AA", &char_buffer);
-            if(n <= 0) {
-                // missing, unknown, or empty tag
-                return;
-            }
-            // If error_rate is missing, try to look for an AAQ tag
-            if(local_error_rate == 0.0) {
-                n = get_info_int32(header, record, "AAQ", &int_buffer);
-                if(n > 0) {
-                    local_error_rate = phred_to_p01(int_buffer.data[0]);
-                }
-            }
-            // Compare the AA tag to the refalt allele to find the index of the ancestral allele
-            // If this fails, anc = n_allele
-            bcf_unpack(record, BCF_UN_STR);
-            for(anc=0;anc<record->n_allele;++anc) {
-                if(strcmp(char_buffer.data.get(), record->d.allele[anc]) == 0) {
-                    break;
-                }
-            }
-        }
-        double n_der,n_anc,n_total;
+    reader([&,this](bcf1_t *record, const bcf_hdr_t *header){
+    	assert(record != nullptr);
+    	assert(header != nullptr);
 
-        if(!(flags & SOFOS_FLAG_USE_GP)) {
+        // identify which allele is ancestral and its error rate
+        int anc = 0;
+        double error_rate = params_.error_rate;
+        std::tie(anc,error_rate) = GetAncestor(record, header);
+        // skip line on failure
+        if(anc == -1) {
+        	return;
+        }
+
+        if(!params_.flag_use_gp) {
             // Calculate the counts of each allele from the AC/AN tags or directly from GT.
             // Skip line if it fails
-            ac_buffer.assign(record->n_allele,0);
-            if(bcf_calc_ac(header, record, ac_buffer.data(),
-                    ac_which) <= 0) {
-                return;
+            if(!calculate_ac(record, header, ac_which, &ac_buffer)) {
+        		return;
             }
-            int n = std::accumulate(ac_buffer.begin(), ac_buffer.end(), 0);
-            if(n == 0) {
-                return;
-            }
-            // Number of ancestral copies and derived copies.
-            n_anc = (anc < ac_buffer.size()) ? ac_buffer[anc] : 0;
-            n_der = n - n_anc;
-            n_total = n;
+	        // Add this site to the histogram
+        	AddCounts(ac_buffer, anc, error_rate);
         } else {
             // Calculate counts from GP
             int n = get_format_float(header, record, "GP", &gp_buffer);
@@ -223,7 +184,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             }
             int gp_width = n/nsamples;
             // convert GP buffer if needed
-            if(flags & SOFOS_FLAG_PHRED_GP) {
+            if(params_.flag_phred_gp) {
                 for(int i=0;i<n;++i) {
                     gp_buffer.data[i] = phred_to_p01(gp_buffer.data[i]);
                 }
@@ -278,90 +239,90 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
                     }
                 }
             }
-            n_total = std::accumulate(af_buffer.begin(), af_buffer.end(), 0.0);
-            if(n_total == 0.0) {
-                return;
-            }
-            n_anc = (anc < af_buffer.size()) ? af_buffer[anc] : 0;
-            n_der = n_total - n_anc;
-        }
-
-        if(flags & SOFOS_FLAG_FOLDED) {
-            // When calculating the folded spectrum, we can't assume that either
-            // allele is ancestral. Thus we will update the posterior weighted
-            // by the possibility of each occurrence.
-            // The probability that an der is ancestral is its frequency.
-            local_error_rate = (1.0*n_der)/n_total;
-        }
-
-        // Update Posterior and Observed using observed counts
-        if(!(flags & SOFOS_FLAG_FOLDED)) {
-            if(local_error_rate == 0.0) {
-                histogram.AddCounts(n_der, n_anc, 1.0);
-            } else {
-                // If there is some level of uncertainty about the ancestral allele,
-                // weight the two possibilities.
-                histogram.AddCounts(n_der, n_anc, 1.0-local_error_rate);
-                histogram.AddCounts(n_anc, n_der, local_error_rate);
-            }
+	        // Add this site to the histogram
+	        AddCounts(af_buffer,anc,error_rate);
         }
 
         // Increment the number of observed sites.
         nsites += 1;
 
         // Output a progress message every minute or so.
-        if(nsites % 1000 == 0 && !g_sofos_quiet) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last);
-            if(elapsed.count() >= 60) {
-                elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start);
-                last = now;
-                std::cerr << "## [" << elapsed.count() << "s elapsed] "
-                          << nsites << " sites processed --- at "
-                          << bcf_seqname(header, record) << ":" << record->pos+1
-                          << std::endl;
-            }
+        if(!g_sofos_quiet) {
+        	progress([=](std::ostream& os){
+        		os << nsites << " sites processed --- at "
+                   << bcf_seqname(header, record) << ":" << record->pos+1;
+        	});
         }
     });
 
     // Output a progress message at end.
     if(!g_sofos_quiet) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start);
-        std::cerr << "## [" << elapsed.count() << "s elapsed] "
-                  << nsites << " sites processed"
-                  << std::endl;
+    	progress([=](std::ostream& os){
+    		os << nsites << " sites processed";
+    	}, true);
     }
 
     // Add zero-count sites (for controlling ascertainment bias)
-    if(zero > 0.0) {
-        histogram.AddCounts(0.0, ploidy*nsamples, zero);
+    if(params_.zero_count > 0.0) {
+        histogram_.AddCounts(0.0, params_.ploidy*nsamples, params_.zero_count);
     }
+}
 
+void Sofos::FinishHistogram() {
     // calculate prior assuming no data
-    histogram.CalculatePrior();
+    histogram_.CalculatePrior();
 
     // fold histogram if necessary
-    if(flags & SOFOS_FLAG_FOLDED) {
-        histogram.Fold();
+    if(params_.flag_folded) {
+        histogram_.Fold();
     }
+}
 
-    // spacer
-    std::cout << "#\n";
+std::pair<int,double> Sofos::GetAncestor(bcf1_t *record, const bcf_hdr_t *header) {
+	assert(record != nullptr);
+	assert(header != nullptr);
 
-    // output resulting scale
-    std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
-    std::cout << "Number,Prior,Observed,Posterior\n";
-    for(int i=0;i< histogram.posterior().size();++i) {
-        std::cout << i
-                  << "," << histogram.prior()[i]
-                  << "," << histogram.observed()[i]
-                  << "," << histogram.posterior()[i]
-                  << "\n";
+    double error_rate = params_.error_rate;
+    // identify which allele is ancestral
+    // if REFALT is specified, assume 0 is the ancestral allele.
+    int anc = 0;
+    if(!params_.flag_refalt) {
+        // If REFALT is not specified, use the AA tag
+        int n = get_info_string(header, record, "AA", &char_buffer_);
+        if(n <= 0) {
+            // missing, unknown, or empty tag
+            return {-1,0.0};
+        }
+        // If error_rate is missing, try to look for an AAQ tag
+        if(error_rate == 0.0) {
+            n = get_info_int32(header, record, "AAQ", &int_buffer_);
+            if(n > 0) {
+                error_rate = phred_to_p01(int_buffer_.data[0]);
+            }
+        }
+        // Compare the AA tag to the refalt allele to find the index of the ancestral allele
+        // If this fails, anc = n_allele
+        bcf_unpack(record, BCF_UN_STR);
+        for(anc=0;anc<record->n_allele;++anc) {
+            if(strcmp(char_buffer_.data.get(), record->d.allele[anc]) == 0) {
+                break;
+            }
+        }
     }
-    std::cout << std::flush;
-    
-    return EXIT_SUCCESS;
+    return {anc, error_rate};
+}
+
+bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer) {
+	assert(record != nullptr);
+	assert(header != nullptr);
+	assert(ac_buffer != nullptr);
+
+    ac_buffer->assign(record->n_allele,0);
+    if(bcf_calc_ac(header, record, ac_buffer->data(),
+            ac_which) <= 0) {
+        return false;
+    }
+    return true;
 }
 
 // Generate a timestamp. Returns an ISO formatted timestring
@@ -604,6 +565,64 @@ TEST_CASE("phred_to_p01 converts a phred value to a [0,1] value.") {
 }
 #endif
 
+template<typename call_back_t>
+void ProgressMessage::operator()(call_back_t call_back, bool force) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_);
+    if(elapsed.count() >= next_ || force) {
+        next_ += step_;
+        output_ << "## [" << elapsed.count() << "s elapsed] ";
+        call_back(output_);
+        output_ << std::endl;
+    }
+}
 
+// Output header including program runtime information and options
+void output_header(std::ostream &os, const Sofos &sofos,
+	const std::vector<const char *> &paths)
+{
+    auto stamp = timestamp();
+    os << "#SoFoS v2.0\n";
+    os << "#date=" << stamp.first << "\n";
+    os << "#epoch=" << stamp.second << "\n";
+ 	for(auto &&path : paths) {
+	    os << "#path=" << path << "\n";
+ 	}
 
+    os << std::setprecision(std::numeric_limits<double>::max_digits10);
+    os << "#alpha=" << sofos.params_.alpha << "\n";
+    os << "#beta=" << sofos.params_.beta << "\n";
+    os << "#size=" << sofos.params_.size << "\n";
+    os << "#folded=" << (sofos.params_.flag_folded ? 1 : 0) << "\n";
+    os << "#refalt=" << (sofos.params_.flag_refalt ? 1 : 0) << "\n";
+    
+    if(sofos.params_.flag_use_gp) {
+	    os << "#use_gp=" << (sofos.params_.flag_phred_gp ? 2 : 1) << "\n";
+    }
 
+    if(sofos.params_.error_rate > 0.0) {
+        os << "#error_rate=" << sofos.params_.error_rate << "\n";
+    }
+    if(sofos.params_.zero_count > 0.0) {
+        os << "#zero=" << sofos.params_.zero_count << "\n";
+        os << "#ploidy=" << sofos.params_.ploidy << "\n";
+    }
+
+    // spacer
+    os << "#\n";
+}
+
+// Output body
+void output_body(std::ostream &os, const Sofos &sofos) {
+    // output resulting scale
+    os << std::setprecision(std::numeric_limits<double>::max_digits10);
+    os << "Number,Prior,Observed,Posterior\n";
+    for(int i=0;i< sofos.histogram().posterior().size();++i) {
+        os << i
+           << "," << sofos.histogram().prior()[i]
+           << "," << sofos.histogram().observed()[i]
+           << "," << sofos.histogram().posterior()[i]
+           << "\n";
+    }
+    os << std::flush;
+}
