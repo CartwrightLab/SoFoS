@@ -27,8 +27,10 @@ SOFTWARE.
 #include <htslib/vcfutils.h>
 
 #include <memory>
+#include <chrono>
 
 // The *_free_t classes are used enable RAII on pointers created by htslib.
+namespace detail {
 struct buffer_free_t {
     void operator()(void* ptr) const {
         free(ptr);
@@ -36,7 +38,7 @@ struct buffer_free_t {
 };
 struct file_free_t {
     void operator()(void* ptr) const {
-        vcf_close(reinterpret_cast<vcfFile*>(ptr));
+        hts_close(reinterpret_cast<htsFile*>(ptr));
     }
 };
 struct header_free_t {
@@ -49,11 +51,53 @@ struct bcf_free_t {
         bcf_destroy(reinterpret_cast<bcf1_t*>(ptr));
     }
 };
+}
+
+class BcfReader {
+public:
+    BcfReader(const char *path) {
+        input_.reset(hts_open(path,"r"));
+        if(!input_) {
+            throw std::runtime_error(std::string{"unable to open input file: '"} + path + "'.");
+        }
+        header_.reset(bcf_hdr_read(input_.get()));
+        if(!header_) {
+            throw std::invalid_argument("unable to read header from input.");
+        }
+    }
+
+    const bcf_hdr_t* header() const { return header_.get(); }
+
+    template<typename Func>
+    void operator()(Func func);
+
+protected:
+    std::unique_ptr<htsFile,detail::file_free_t> input_;
+    std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_;
+
+};
+
+
+template<typename Func>
+void BcfReader::operator()(Func func) {
+    std::unique_ptr<bcf1_t,detail::bcf_free_t> record{bcf_init()};
+    if(!record) {
+        throw std::invalid_argument("unable to allocate vcf record.");
+    }
+
+    // begin timer
+    size_t nsites = 0;
+    auto start = std::chrono::steady_clock::now();
+    auto last = start;
+    while(bcf_read(input_.get(), header_.get(), record.get()) == 0) {
+        func(record.get(), header());
+    }
+}
 
 // Templates and functions for handling buffers used by htslib
 template<typename T>
 struct buffer_t {
-    std::unique_ptr<T[],buffer_free_t> data;
+    std::unique_ptr<T[],detail::buffer_free_t> data;
     int capacity;
 };
 
@@ -64,7 +108,7 @@ buffer_t<T> make_buffer(int sz) {
     if(p == nullptr) {
         throw std::bad_alloc{};
     }
-    return {std::unique_ptr<T[],buffer_free_t>{reinterpret_cast<T*>(p)}, sz};
+    return {std::unique_ptr<T[], detail::buffer_free_t>{reinterpret_cast<T*>(p)}, sz};
 }
 
 // htslib may call realloc on our pointer. When using a managed buffer,

@@ -114,10 +114,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
     assert(ploidy >= 0.0);
 
     // open the input file or throw on error
-    vcfFile *input_ptr = vcf_open(path,"r");
-    if(input_ptr == nullptr) {
-        throw std::runtime_error(std::string{"unable to open input file: '"} + path +"'.");
-    }
+    BcfReader reader{path};
 
     // Output header including program runtime information and options
     auto stamp = timestamp();
@@ -140,16 +137,9 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
         std::cout << "#ploidy=" << ploidy << "\n";
     }
     // Setup for reading from vcf file
-    std::unique_ptr<vcfFile,file_free_t> input{input_ptr};
-    std::unique_ptr<bcf_hdr_t,header_free_t> header{bcf_hdr_read(input.get())};
-    if(!header) {
-        throw std::invalid_argument("unable to read header from input.");
-    }
-    std::unique_ptr<bcf1_t,bcf_free_t> record{bcf_init()};
-    if(!record) {
-        throw std::invalid_argument("unable to initialize empty vcf record.");
-    }
-    size_t nsamples = bcf_hdr_nsamples(header.get());
+    auto header_ptr = reader.header();
+
+    size_t nsamples = bcf_hdr_nsamples(header_ptr);
     if(nsamples <= 0) {
         throw std::invalid_argument("input vcf has no samples.");
     }
@@ -166,8 +156,8 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
     std::vector<double> af_buffer;
     int ac_which = BCF_UN_FMT;
     // if AN and AC tags are defined, use them
-    if(bcf_hdr_id2int(header.get(), BCF_DT_ID, "AN") >= 0 &&
-       bcf_hdr_id2int(header.get(), BCF_DT_ID, "AC") >= 0 ) {
+    if(bcf_hdr_id2int(header_ptr, BCF_DT_ID, "AN") >= 0 &&
+       bcf_hdr_id2int(header_ptr, BCF_DT_ID, "AC") >= 0 ) {
         ac_which |= BCF_UN_INFO;
     }
 
@@ -177,7 +167,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
 
     // begin reading from the input file
     size_t nsites = 0;
-    while(bcf_read(input.get(), header.get(), record.get()) == 0) {
+    reader([&](bcf1_t *record, const bcf_hdr_t *header){
         // Make a copy of error_rate because we may update it.
         double local_error_rate = error_rate;
         // identify which allele is ancestral
@@ -185,21 +175,21 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
         int anc = 0;
         if(!(flags & SOFOS_FLAG_REFALT)) {
             // If REFALT is not specified, use the AA tag
-            int n = get_info_string(header.get(), record.get(), "AA", &char_buffer);
+            int n = get_info_string(header, record, "AA", &char_buffer);
             if(n <= 0) {
                 // missing, unknown, or empty tag
-                continue;
+                return;
             }
             // If error_rate is missing, try to look for an AAQ tag
             if(local_error_rate == 0.0) {
-                n = get_info_int32(header.get(), record.get(), "AAQ", &int_buffer);
+                n = get_info_int32(header, record, "AAQ", &int_buffer);
                 if(n > 0) {
                     local_error_rate = phred_to_p01(int_buffer.data[0]);
                 }
             }
             // Compare the AA tag to the refalt allele to find the index of the ancestral allele
             // If this fails, anc = n_allele
-            bcf_unpack(record.get(), BCF_UN_STR);
+            bcf_unpack(record, BCF_UN_STR);
             for(anc=0;anc<record->n_allele;++anc) {
                 if(strcmp(char_buffer.data.get(), record->d.allele[anc]) == 0) {
                     break;
@@ -212,13 +202,13 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             // Calculate the counts of each allele from the AC/AN tags or directly from GT.
             // Skip line if it fails
             ac_buffer.assign(record->n_allele,0);
-            if(bcf_calc_ac(header.get(), record.get(), ac_buffer.data(),
+            if(bcf_calc_ac(header, record, ac_buffer.data(),
                     ac_which) <= 0) {
-                continue;
+                return;
             }
             int n = std::accumulate(ac_buffer.begin(), ac_buffer.end(), 0);
             if(n == 0) {
-                continue;
+                return;
             }
             // Number of ancestral copies and derived copies.
             n_anc = (anc < ac_buffer.size()) ? ac_buffer[anc] : 0;
@@ -226,10 +216,10 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             n_total = n;
         } else {
             // Calculate counts from GP
-            int n = get_format_float(header.get(), record.get(), "GP", &gp_buffer);
+            int n = get_format_float(header, record, "GP", &gp_buffer);
             if(n <= 0) {
                 // missing, unknown, or empty tag
-                continue;
+                return;
             }
             int gp_width = n/nsamples;
             // convert GP buffer if needed
@@ -240,10 +230,10 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             }
 
             // Calculate GT (for ploidy)
-            n = get_genotypes(header.get(), record.get(), &gt_buffer);
+            n = get_genotypes(header, record, &gt_buffer);
             if(n <= 0) {
                 // missing, unknown, or empty tag
-                continue;
+                return;
             }
             int gt_width = n/nsamples;
 
@@ -290,7 +280,7 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
             }
             n_total = std::accumulate(af_buffer.begin(), af_buffer.end(), 0.0);
             if(n_total == 0.0) {
-                continue;
+                return;
             }
             n_anc = (anc < af_buffer.size()) ? af_buffer[anc] : 0;
             n_der = n_total - n_anc;
@@ -328,11 +318,12 @@ int sofos_main(const char *path, double alpha, double beta, int size, double err
                 last = now;
                 std::cerr << "## [" << elapsed.count() << "s elapsed] "
                           << nsites << " sites processed --- at "
-                          << bcf_seqname(header.get(), record.get()) << ":" << record->pos+1
+                          << bcf_seqname(header, record) << ":" << record->pos+1
                           << std::endl;
             }
         }
-    }
+    });
+
     // Output a progress message at end.
     if(!g_sofos_quiet) {
         auto now = std::chrono::steady_clock::now();
