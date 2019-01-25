@@ -419,15 +419,25 @@ void update_counts(double a, double b, double weight, std::vector<double> *count
     }
 }
 
+
+/*
+#Rcode for generating expectations
+library(rmutil)
+dbetabinom(0:n,n,a/(a+b),a+b)
+*/
 #ifdef SOFOS_UNIT_TESTS
 TEST_CASE("update_counts adds resampled data to a vector") {
     using namespace Catch::literals;
     auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon()*100);
 
-    std::vector<double> v = {0.0,0.1};
-    std::vector<Approx> u = {0.0_a,0.1_a};
+    std::vector<double> counts(5,0);
+    update_counts(1,10,1,&counts);
 
-    CHECK(v==u);
+    std::vector<Approx> expected = {
+        0.714285714_a, 0.219780220_a, 0.054945055_a,
+        0.009990010_a, 0.000999001_a };
+
+    CHECK(counts==expected);
 }
 #endif
 
