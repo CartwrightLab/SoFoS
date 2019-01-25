@@ -111,7 +111,6 @@ public:
 
     const SofosHistogram histogram() const { return histogram_; }
 
-protected:
     std::pair<int,double> GetAncestor(bcf1_t *record, const bcf_hdr_t *header);
 
     // This is a template in case SofosHistogram::AddCounts becomes an overloaded function
@@ -198,5 +197,20 @@ void Sofos::AddCounts(const std::vector<T> &counts, int anc, double error_rate) 
         histogram_.AddCounts(n_anc, n_der, error_rate);
     }
 }
+
+// calculate prior and fold if necessary
+// should be done after the all data has been processed
+inline
+void Sofos::FinishHistogram() {
+    // calculate prior assuming no data
+    histogram_.CalculatePrior();
+
+    // fold histogram if necessary
+    if(params_.flag_folded) {
+        histogram_.Fold();
+    }
+}
+
+
 
 #endif // SOFOS_SOFOS_HPP

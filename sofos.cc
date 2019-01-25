@@ -40,6 +40,7 @@ SOFTWARE.
 #include <limits>
 #include <chrono>
 #include <numeric>
+#include <locale>
 
 bool g_sofos_quiet = false;
 
@@ -142,10 +143,11 @@ protected:
 template<typename call_back_t>
 void ProgressMessage::operator()(call_back_t call_back, bool force) {
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_);
+    std::chrono::duration<double> elapsed = now - start_;
     if(elapsed.count() >= next_ || force) {
         next_ += step_;
-        output_ << "## [" << elapsed.count() << "s elapsed] ";
+        output_ << "## [" << std::fixed << std::setprecision(4) << elapsed.count() << "s elapsed] ";
+        output_ << std::scientific << std::setprecision(6);
         call_back(output_);
         output_ << std::endl;
     }
@@ -238,18 +240,6 @@ void Sofos::RescaleBcf(const char *path) {
     }
 }
 
-// calculate prior and fold if necessary
-// should be done after the all data has been processed
-void Sofos::FinishHistogram() {
-    // calculate prior assuming no data
-    histogram_.CalculatePrior();
-
-    // fold histogram if necessary
-    if(params_.flag_folded) {
-        histogram_.Fold();
-    }
-}
-
 // Determine the ancestral allele and its error rate
 std::pair<int,double> Sofos::GetAncestor(bcf1_t *record, const bcf_hdr_t *header) {
     assert(record != nullptr);
@@ -285,6 +275,109 @@ std::pair<int,double> Sofos::GetAncestor(bcf1_t *record, const bcf_hdr_t *header
     return {anc, error_rate};
 }
 
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("Sofos::GetAncestor() calculates the ancestral allele id and error rate") {
+    using namespace Catch::literals;
+
+	char header_str[] =
+		"##fileformat=VCFv4.2\n"
+		"##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+		"##INFO=<ID=AA,Number=1,Type=String,Description=\"Ancestral Allele\">\n"
+		"##INFO=<ID=AAQ,Number=1,Type=Integer,Description=\"AA Quality\">\n"
+		"##contig=<ID=1,length=10000>\n"
+		"#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+	;
+
+	std::unique_ptr<bcf1_t,detail::bcf_free_t> record_{bcf_init()};
+	REQUIRE((record_));
+
+	std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_{bcf_hdr_init("w")};
+	REQUIRE((header_));
+
+	auto header = header_.get();
+	auto record = record_.get();
+
+	int ret = bcf_hdr_parse(header, header_str);
+	REQUIRE(ret == 0);
+
+	auto parse_aa = [=](const char* line, const sofos_params_t &params, int* anc, double* error_rate) -> bool {
+		kstring_t kstr = {0,0,nullptr};
+		if(kputs(line, &kstr) < 0) {
+			return false;
+		}
+		int ret = vcf_parse(&kstr, header, record);
+		if(ret != 0) {
+			return false;
+		}
+		
+		Sofos sofos{params};
+		std::tie(*anc, *error_rate) = sofos.GetAncestor(record, header);
+		return true;
+	};
+
+	sofos_params_t params;
+	int anc;
+	double error_rate;
+
+	SECTION("when refalt==true and error_rate!=0.0") {
+		params.flag_refalt = true;
+		params.error_rate = 0.1;
+		bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", params, &anc, &error_rate);
+		REQUIRE(ret);
+
+		CHECK(anc == 0);
+		CHECK(error_rate == 0.1);
+	}
+	SECTION("when refalt==false and error_rate!=0.0") {
+		params.flag_refalt = false;
+		params.error_rate = 0.1;
+		SECTION("when AA is known") {
+			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", params, &anc, &error_rate);
+			REQUIRE(ret);
+			CHECK(anc == 1);
+			CHECK(error_rate == 0.1);
+		}
+
+		SECTION("when AA is not known") {
+			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=G", params, &anc, &error_rate);
+			REQUIRE(ret);
+			CHECK(anc == 2);
+			CHECK(error_rate == 0.1);			
+		}
+
+		SECTION("when AA is missing") {
+			ret = parse_aa("1\t1\t.\tA\tC\t.\t.\t.", params, &anc, &error_rate);
+			REQUIRE(ret);
+			CHECK(anc == -1);
+			CHECK(error_rate == 0.0);
+		}
+
+		SECTION("when AAQ is specified") {
+			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C;AAQ=40", params, &anc, &error_rate);
+			REQUIRE(ret);
+			CHECK(anc == 1);
+			CHECK(error_rate == 0.1);
+		}
+	}
+	SECTION("when refalt==false and error_rate==0.0") {
+		params.flag_refalt = false;
+		params.error_rate = 0.0;
+		SECTION("when AAQ is specified") {
+			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=A;AAQ=40", params, &anc, &error_rate);
+			REQUIRE(ret);
+			CHECK(anc == 0);
+			CHECK(error_rate == 0.0001_a);
+		}
+		SECTION("when AAQ is missing") {
+			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", params, &anc, &error_rate);
+			REQUIRE(ret);
+			CHECK(anc == 1);
+			CHECK(error_rate == 0.0);
+		}
+	}
+}
+#endif
+
 // Calculate allele counts from AC/AN or GT values
 bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer) {
     assert(record != nullptr);
@@ -297,6 +390,89 @@ bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::ve
     }
     return true;
 }
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("calculate_ac() calculates allele counts from GT or AC/AN values") {
+	char header_str[] =
+		"##fileformat=VCFv4.2\n"
+		"##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+		"##INFO=<ID=AC,Number=A,Type=Integer,Description=\"Allele count in genotypes\">\n"
+		"##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total number of alleles in called genotypes\">\n"
+		"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+		"##contig=<ID=1,length=10000>\n"
+		"#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+	;
+
+	std::unique_ptr<bcf1_t,detail::bcf_free_t> record_{bcf_init()};
+	REQUIRE((record_));
+
+	std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_{bcf_hdr_init("w")};
+	REQUIRE((header_));
+
+	auto header = header_.get();
+	auto record = record_.get();
+
+	int ret = bcf_hdr_parse(header, header_str);
+	REQUIRE(ret == 0);
+
+	auto parse_ac = [=](const char* line, int ac_which, int sz) -> std::vector<int> {
+		kstring_t kstr = {0,0,nullptr};
+		if(kputs(line, &kstr) < 0) {
+			return {};
+		}
+		int ret = vcf_parse(&kstr, header, record);
+		if(ret != 0) {
+			return {};
+		}
+		std::vector<int> ac(sz,0);
+		if(!calculate_ac(record, header, ac_which, &ac)) {
+			return {};
+		}
+		return ac;
+	};
+
+	SECTION("when it can only read from info") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\tAC=4;AN=10\tGT\t0/0\t0/0\t1/1", BCF_UN_INFO, 2);
+		std::vector<int> expected = {6,4};
+		CHECK(ac == expected);
+	}
+	SECTION("when it can only read from format") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\tAC=4;AN=10\tGT\t0/0\t0/0\t1/1", BCF_UN_FMT, 2);
+		std::vector<int> expected = {4,2};
+		CHECK(ac == expected);
+	}
+	SECTION("when samples are missing") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\tAC=4;AN=10", BCF_UN_FMT|BCF_UN_INFO, 2);
+		std::vector<int> expected = {6,4};
+		CHECK(ac == expected);
+	}
+	SECTION("when info is missing") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\t.\tGT\t0/0\t0/0\t1/1", BCF_UN_FMT|BCF_UN_INFO, 2);
+		std::vector<int> expected = {4,2};
+		CHECK(ac == expected);
+	}
+	SECTION("when ploidy is mixed") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\t.\tGT\t0/0\t0/0\t1", BCF_UN_FMT|BCF_UN_INFO, 2);
+		std::vector<int> expected = {4,1};
+		CHECK(ac == expected);
+	}
+	SECTION("when there is missing data") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\t.\tGT\t.\t0/.\t1", BCF_UN_FMT|BCF_UN_INFO, 2);
+		std::vector<int> expected = {1,1};
+		CHECK(ac == expected);
+	}
+	SECTION("when there are three alleles") {
+		auto ac = parse_ac("1\t1\t.\tA\tC,AA\t.\t.\tAC=4,6;AN=10", BCF_UN_FMT|BCF_UN_INFO, 3);
+		std::vector<int> expected = {0,4,6};
+		CHECK(ac == expected);
+	}
+	SECTION("when there is no data") {
+		auto ac = parse_ac("1\t1\t.\tA\tC\t.\t.\t.", BCF_UN_FMT|BCF_UN_INFO, 2);
+		std::vector<int> expected = {};
+		CHECK(ac == expected);
+	}
+}
+#endif
 
 // Calculate allele counts from GP values
 bool calculate_af_t::operator()(bcf1_t *record, const bcf_hdr_t *header, bool phred_scaled, std::vector<double> *af_buffer) {
@@ -341,7 +517,9 @@ bool calculate_af_t::operator()(bcf1_t *record, const bcf_hdr_t *header, bool ph
                 break;
             }
         }
-        if(sample_ploidy == 0) {
+        // htslib does not distinguish between a haploid sample with missing gt
+        // and a sample with zero ploidy
+        if(sample_ploidy == 0 || (sample_ploidy == 1 && bcf_gt_is_missing(p_gt[0]))) {
             continue;
         }
         // Setup a sequence of k-permutations
@@ -377,21 +555,132 @@ bool calculate_af_t::operator()(bcf1_t *record, const bcf_hdr_t *header, bool ph
     return true;
 }
 
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("calculate_af() calculates allele counts from GP values") {
+    using namespace Catch::literals;
+	char header_str[] =
+		"##fileformat=VCFv4.2\n"
+		"##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+		"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+		"##FORMAT=<ID=GP,Number=G,Type=Float,Description=\"Genotype Posterior\">\n"
+		"##contig=<ID=1,length=10000>\n"
+		"#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+	;
+
+	std::unique_ptr<bcf1_t,detail::bcf_free_t> record_{bcf_init()};
+	REQUIRE((record_));
+
+	std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_{bcf_hdr_init("w")};
+	REQUIRE((header_));
+
+	auto header = header_.get();
+	auto record = record_.get();
+
+	int ret = bcf_hdr_parse(header, header_str);
+	REQUIRE(ret == 0);
+
+	calculate_af_t calculate_af{3};
+
+	auto parse_gp = [=,&calculate_af](const char* line, bool phread, int sz) -> std::vector<double> {
+		kstring_t kstr = {0,0,nullptr};
+		if(kputs(line, &kstr) < 0) {
+			return {};
+		}
+		int ret = vcf_parse(&kstr, header, record);
+		if(ret != 0) {
+			return {};
+		}
+		std::vector<double> af(sz,0.0);
+		if(!calculate_af(record, header, phread, &af)) {
+			return {};
+		}
+		return af;
+	};
+
+	SECTION("when GP is standard scaled") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t0/0:0.9,0.1,0.0\t0/0:0.8,0.1,0.1\t0/0:0.7,0.1,0.2", false, 2);
+		std::vector<Approx> expected = {5.1_a,0.9_a};
+		CHECK(ac == expected);
+	}
+
+	SECTION("when GP is phread scaled") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t0/0:0.4575749,10.0,64.0\t0/0:0.9691001,10.0,10.0\t0/0:1.5490196,10.0,6.9897000", true, 2);
+		std::vector<Approx> expected = {5.1_a,0.9_a};
+		CHECK(ac == expected);
+	}
+
+	SECTION("when GP has missing values") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t0/0:1.0\t0/0:.\t0/0:.,.,1.0", false, 2);
+		std::vector<Approx> expected = {2.0_a,2.0_a};
+		CHECK(ac == expected);
+	}
+
+	SECTION("when GP has mixed ploidy") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t0/0/0:0.4,0.3,0.2,0.1\t0/0:0.8,0.1,0.1\t0:0.9,0.1", false, 2);
+		std::vector<Approx> expected = {4.6_a,1.4_a};
+		CHECK(ac == expected);
+	}
+
+	SECTION("when GP is missing") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT\t0/0\t0/0\t0/0", false, 2);
+		std::vector<Approx> expected = {};
+		CHECK(ac == expected);
+	}
+
+	SECTION("when GT is missing") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGP\t1,0,0\t1,0,0\t1,0,0", false, 2);
+		std::vector<Approx> expected = {};
+		CHECK(ac == expected);
+	}
+
+	SECTION("when GT has missing values") {
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t./.:0.9,0.1,0.0\t./.:0.8,0.1,0.1\t.:0.7,0.1,0.2", false, 2);
+		std::vector<Approx> expected = {3.6_a,0.4_a};
+		CHECK(ac == expected);
+	}
+
+
+}
+#endif
+
+
 // Generate a timestamp. Returns an ISO formatted timestring
 // and seconds since epoch.
 std::pair<std::string, std::string> timestamp() {
-    using namespace std;
-    using namespace std::chrono;
-    std::string buffer(127, '\0');
-    auto now = system_clock::now();
-    auto now_t = system_clock::to_time_t(now);
-    size_t sz = strftime(&buffer[0], 127, "%FT%T%z",
-                         localtime(&now_t));
-    buffer.resize(sz);
+    char buffer[32];
+    auto now = std::chrono::system_clock::now();
+    auto now_t = std::chrono::system_clock::to_time_t(now);
+    size_t sz = std::strftime(buffer, 32, "%FT%T%z",
+                         std::localtime(&now_t));
     auto epoch = std::chrono::duration_cast<std::chrono::milliseconds>(
                      now.time_since_epoch());
-    return {buffer, to_string(epoch.count())};
+    return {buffer, std::to_string(epoch.count())};
 }
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("timestamp() returns the current localtime and epoch") {
+	auto now = std::chrono::system_clock::now();
+    auto now_time = std::chrono::system_clock::to_time_t(now);
+    auto epoch = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     now.time_since_epoch());
+
+	auto stamp = timestamp();
+	auto stamp_epoch = std::stoull(stamp.second);
+
+	std::tm stamp_tm = {};
+ 	std::istringstream ss(stamp.first);
+ 	ss >> std::get_time(&stamp_tm, "%Y-%m-%dT%H:%M:%S");
+ 	REQUIRE(ss.good());
+
+ 	auto stamp_time = std::mktime(&stamp_tm);
+
+ 	REQUIRE(stamp_time != -1);
+ 	double time_diff = fabs(std::difftime(stamp_time,now_time));
+ 	CHECK(time_diff <= 1.0);
+
+	CHECK(stamp_epoch <= epoch.count()+1000);
+}
+#endif
 
 // This is the core algorithm of SoFoS.
 // It calculates the histogram of Beta-Binomial(N, a, b) and
@@ -429,15 +718,35 @@ dbetabinom(0:n,n,a/(a+b),a+b)
 TEST_CASE("update_counts adds resampled data to a vector") {
     using namespace Catch::literals;
     auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon()*100);
+	std::vector<double> expected = {0.714285714, 0.219780220, 0.054945055, 0.009990010, 0.000999001};
+	std::vector<Approx> expected_a;
 
-    std::vector<double> counts(5,0);
-    update_counts(1,10,1,&counts);
-
-    std::vector<Approx> expected = {
-        0.714285714_a, 0.219780220_a, 0.054945055_a,
-        0.009990010_a, 0.000999001_a };
-
-    CHECK(counts==expected);
+	SECTION("when counts are zero") {
+	    std::vector<double> counts = {0,0,0,0,0};
+    	update_counts(1,10,1,&counts);
+    	for(auto &&x : expected) {
+    		expected_a.emplace_back(x);
+    	}
+    	CHECK(counts == expected_a);
+	}
+	SECTION("when counts are not zero") {
+	    std::vector<double> counts = {10,20,30,40,50};
+    	update_counts(1,10,1,&counts);
+    	double d = 10.0;
+    	for(auto &&x : expected) {
+    		expected_a.emplace_back(x+d);
+    		d += 10.0;
+    	}
+    	CHECK(counts == expected_a);
+	}
+	SECTION("when weight is not 1") {
+	    std::vector<double> counts = {0,0,0,0,0};
+    	update_counts(1,10,0.1,&counts);
+    	for(auto &&x : expected) {
+    		expected_a.emplace_back(x*0.1);
+    	}
+    	CHECK(counts == expected_a);
+	}
 }
 #endif
 
@@ -696,12 +1005,14 @@ TEST_CASE("output_header generates a header containing program information") {
     SECTION("default output") {
         auto lines = get_header_lines({},{});
         REQUIRE(lines.size() == 9);
+        CHECK(lines[0] == "#SoFoS v2.0");
         for(auto && line : lines){
             CHECK_THAT(line, StartsWith("#"));
         }
     }
     SECTION("when there is one path") {
         auto lines = get_header_lines({},{"-"});
+        CHECK(lines[0] == "#SoFoS v2.0");
         REQUIRE(lines.size() == 10);
         for(auto && line : lines){
             CHECK_THAT(line, StartsWith("#"));
@@ -716,6 +1027,7 @@ TEST_CASE("output_header generates a header containing program information") {
         params.zero_count = 100;
 
         auto lines = get_header_lines(params,{"-","a","b"});
+        CHECK(lines[0] == "#SoFoS v2.0");
         REQUIRE(lines.size() == 16);
         for(auto && line : lines){
             CHECK_THAT(line, StartsWith("#"));

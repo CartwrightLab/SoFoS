@@ -36,6 +36,6 @@ test: sofos_test
 coverage: sofos_test_coverage
 	rm -f sofos.gcda
 	./sofos_test_coverage
-	gcovr -r . -e catch.hpp --html-details -o coverage.html
+	gcovr -r . -e catch.hpp -e test_utils.hpp --html-details -o coverage.html
 
 .PHONY: coverage test
