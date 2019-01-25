@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
         output_header(std::cout, sofos, paths);
 
         for(auto && path : paths) {
-            sofos.RescaleFile(path);
+            sofos.RescaleBcf(path);
         }
         sofos.FinishHistogram();
 

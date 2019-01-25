@@ -21,8 +21,10 @@ SOFTWARE.
 *****************************************************************************/
 
 #ifdef SOFOS_UNIT_TESTS
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
+
+#include <sstream>
 #endif
 
 #include <unistd.h>
@@ -41,7 +43,21 @@ SOFTWARE.
 
 bool g_sofos_quiet = false;
 
+// calculate allele counts from AC+AN or GT values.
 bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer);
+
+// a functor to calculate allele counts from GP values
+struct calculate_af_t {
+    calculate_af_t(int nsamples) {
+        gp_buffer = make_buffer<float>(3*nsamples);
+        gt_buffer = make_buffer<int32_t>(2*nsamples);
+    }
+    bool operator()(bcf1_t *record, const bcf_hdr_t *header, bool phred_scaled, std::vector<double> *af_buffer);
+
+    // reusable buffers
+    buffer_t<float> gp_buffer;
+    buffer_t<int32_t> gt_buffer;
+};
 
 std::pair<std::string, std::string> timestamp();
 
@@ -105,24 +121,38 @@ TEST_CASE("Combinadic generates the combinatorial number system") {
 }
 #endif
 
+// Utility class to output a message every X number of seconds
 class ProgressMessage {
 public:
-	ProgressMessage(std::ostream& os, int step) : step_{step}, next_{step}, output_{os} {
-		start_ = std::chrono::steady_clock::now();
-	}
+    ProgressMessage(std::ostream& os, int step) : step_{step}, next_{step}, output_{os} {
+        start_ = std::chrono::steady_clock::now();
+    }
 
-	template<typename call_back_t>
-	void operator()(call_back_t call_back, bool force=false);
+    template<typename call_back_t>
+    void operator()(call_back_t call_back, bool force=false);
 
 protected:
-	std::ostream& output_;
-	int step_;
-	int next_;
+    std::ostream& output_;
+    int step_;
+    int next_;
 
-	decltype(std::chrono::steady_clock::now()) start_;
+    decltype(std::chrono::steady_clock::now()) start_;
 };
 
-void Sofos::RescaleFile(const char *path) {
+template<typename call_back_t>
+void ProgressMessage::operator()(call_back_t call_back, bool force) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_);
+    if(elapsed.count() >= next_ || force) {
+        next_ += step_;
+        output_ << "## [" << elapsed.count() << "s elapsed] ";
+        call_back(output_);
+        output_ << std::endl;
+    }
+}
+
+// Process a VCF file and add its contents to the histogram
+void Sofos::RescaleBcf(const char *path) {
     assert(path != nullptr);
 
     // open the input file or throw on error
@@ -136,10 +166,8 @@ void Sofos::RescaleFile(const char *path) {
     if(nsamples <= 0) {
         throw std::invalid_argument("input variant file has no samples.");
     }
-    auto gp_buffer = make_buffer<float>(3*nsamples);
-    auto gt_buffer = make_buffer<int32_t>(2*nsamples);
-
-
+    // resize the gp and gt buffers
+    calculate_af_t calculate_af(nsamples);
 
     // Setup for reading AC tags
     int ac_which = BCF_UN_FMT;
@@ -149,14 +177,14 @@ void Sofos::RescaleFile(const char *path) {
         ac_which |= BCF_UN_INFO;
     }
 
-    // begin timer
+    // begin timer that activates every 60s
     ProgressMessage progress{std::cerr, 60};
 
     // begin reading from the input file
     size_t nsites = 0;
-    reader([&,this](bcf1_t *record, const bcf_hdr_t *header){
-    	assert(record != nullptr);
-    	assert(header != nullptr);
+    reader([&](bcf1_t *record, const bcf_hdr_t *header){
+        assert(record != nullptr);
+        assert(header != nullptr);
 
         // identify which allele is ancestral and its error rate
         int anc = 0;
@@ -164,83 +192,25 @@ void Sofos::RescaleFile(const char *path) {
         std::tie(anc,error_rate) = GetAncestor(record, header);
         // skip line on failure
         if(anc == -1) {
-        	return;
+            return;
         }
 
         if(!params_.flag_use_gp) {
             // Calculate the counts of each allele from the AC/AN tags or directly from GT.
-            // Skip line if it fails
             if(!calculate_ac(record, header, ac_which, &ac_buffer)) {
-        		return;
+                // Skip line if it fails
+                return;
             }
-	        // Add this site to the histogram
-        	AddCounts(ac_buffer, anc, error_rate);
+            // Add this site to the histogram
+            AddCounts(ac_buffer, anc, error_rate);
         } else {
-            // Calculate counts from GP
-            int n = get_format_float(header, record, "GP", &gp_buffer);
-            if(n <= 0) {
-                // missing, unknown, or empty tag
+            // Calculate the counts of each allele from the GP tags
+            if(!calculate_af(record, header, params_.flag_phred_gp, &af_buffer)) {
+                // Skip line if it fails
                 return;
-            }
-            int gp_width = n/nsamples;
-            // convert GP buffer if needed
-            if(params_.flag_phred_gp) {
-                for(int i=0;i<n;++i) {
-                    gp_buffer.data[i] = phred_to_p01(gp_buffer.data[i]);
-                }
-            }
-
-            // Calculate GT (for ploidy)
-            n = get_genotypes(header, record, &gt_buffer);
-            if(n <= 0) {
-                // missing, unknown, or empty tag
-                return;
-            }
-            int gt_width = n/nsamples;
-
-            // Allocate vector to estimate allele counts from GP
-            af_buffer.assign(record->n_allele,0.0);
-            for(int i=0; i<nsamples; i++) {
-                // identify ploidy for this sample
-                int *p_gt = gt_buffer.data.get() + i*gt_width;
-                int sample_ploidy=0;
-                for(;sample_ploidy < gt_width; ++sample_ploidy) {
-                    if(p_gt[sample_ploidy] == bcf_int32_vector_end) {
-                        break;
-                    }
-                }
-                // Setup a sequence of k-permutations
-                Combinadic gp_alleles{sample_ploidy};
-                int gp_alleles_sz = record->n_allele + sample_ploidy - 1;
-
-                // Step thorough each element of the gp
-                float *p_gp = gp_buffer.data.get() + i*gp_width;
-                for(int j=0; j < gp_width; ++j, gp_alleles.Next()) {
-                    // check for missing and end values
-                    if(bcf_float_is_vector_end(p_gp[j])) {
-                        break;
-                    }
-                    if(bcf_float_is_missing(p_gp[j])) {
-                        continue;
-                    }
-                    // step through the alleles for this GP
-                    auto alleles = gp_alleles.Get();
-                    int pos = 0;
-                    for(int h=0; h < gp_alleles_sz; ++h) {
-                        // if the lowest bit is 1, we have an allele
-                        // if the lowest bit is 0, we move on to the next allele
-                        if((alleles&0x1) == 1) {
-                            af_buffer[pos] += p_gp[j];
-                        } else {
-                            pos += 1;
-                        }
-                        // shit to the next bit
-                        alleles = alleles >> 1;
-                    }
-                }
-            }
-	        // Add this site to the histogram
-	        AddCounts(af_buffer,anc,error_rate);
+            }            
+            // Add this site to the histogram
+            AddCounts(af_buffer,anc,error_rate);
         }
 
         // Increment the number of observed sites.
@@ -248,18 +218,18 @@ void Sofos::RescaleFile(const char *path) {
 
         // Output a progress message every minute or so.
         if(!g_sofos_quiet) {
-        	progress([=](std::ostream& os){
-        		os << nsites << " sites processed --- at "
+            progress([=](std::ostream& os){
+                os << nsites << " sites processed --- at "
                    << bcf_seqname(header, record) << ":" << record->pos+1;
-        	});
+            });
         }
     });
 
     // Output a progress message at end.
     if(!g_sofos_quiet) {
-    	progress([=](std::ostream& os){
-    		os << nsites << " sites processed";
-    	}, true);
+        progress([=](std::ostream& os){
+            os << nsites << " sites processed";
+        }, true);
     }
 
     // Add zero-count sites (for controlling ascertainment bias)
@@ -268,6 +238,8 @@ void Sofos::RescaleFile(const char *path) {
     }
 }
 
+// calculate prior and fold if necessary
+// should be done after the all data has been processed
 void Sofos::FinishHistogram() {
     // calculate prior assuming no data
     histogram_.CalculatePrior();
@@ -278,9 +250,10 @@ void Sofos::FinishHistogram() {
     }
 }
 
+// Determine the ancestral allele and its error rate
 std::pair<int,double> Sofos::GetAncestor(bcf1_t *record, const bcf_hdr_t *header) {
-	assert(record != nullptr);
-	assert(header != nullptr);
+    assert(record != nullptr);
+    assert(header != nullptr);
 
     double error_rate = params_.error_rate;
     // identify which allele is ancestral
@@ -312,15 +285,94 @@ std::pair<int,double> Sofos::GetAncestor(bcf1_t *record, const bcf_hdr_t *header
     return {anc, error_rate};
 }
 
+// Calculate allele counts from AC/AN or GT values
 bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer) {
-	assert(record != nullptr);
-	assert(header != nullptr);
-	assert(ac_buffer != nullptr);
+    assert(record != nullptr);
+    assert(header != nullptr);
+    assert(ac_buffer != nullptr);
 
     ac_buffer->assign(record->n_allele,0);
-    if(bcf_calc_ac(header, record, ac_buffer->data(),
-            ac_which) <= 0) {
+    if(bcf_calc_ac(header, record, ac_buffer->data(), ac_which) <= 0) {
         return false;
+    }
+    return true;
+}
+
+// Calculate allele counts from GP values
+bool calculate_af_t::operator()(bcf1_t *record, const bcf_hdr_t *header, bool phred_scaled, std::vector<double> *af_buffer) {
+    assert(record != nullptr);
+    assert(header != nullptr);
+    assert(af_buffer != nullptr);
+
+    size_t nsamples = bcf_hdr_nsamples(header);
+    assert(nsamples > 0);
+
+    // Calculate counts from GP
+    int n = get_format_float(header, record, "GP", &gp_buffer);
+    if(n <= 0) {
+        // missing, unknown, or empty tag
+        return false;
+    }
+    int gp_width = n/nsamples;
+
+    // convert GP buffer if needed
+    if(phred_scaled) {
+        for(int i=0;i<n;++i) {
+            gp_buffer.data[i] = phred_to_p01(gp_buffer.data[i]);
+        }
+    }
+
+    // Calculate GT (for ploidy)
+    n = get_genotypes(header, record, &gt_buffer);
+    if(n <= 0) {
+        // missing, unknown, or empty tag
+        return false;
+    }
+    int gt_width = n/nsamples;
+
+    // Allocate vector to estimate allele counts from GP
+    af_buffer->assign(record->n_allele,0.0);
+    for(int i=0; i<nsamples; i++) {
+        // identify ploidy for this sample
+        int *p_gt = gt_buffer.data.get() + i*gt_width;
+        int sample_ploidy=0;
+        for(;sample_ploidy < gt_width; ++sample_ploidy) {
+            if(p_gt[sample_ploidy] == bcf_int32_vector_end) {
+                break;
+            }
+        }
+        if(sample_ploidy == 0) {
+            continue;
+        }
+        // Setup a sequence of k-permutations
+        Combinadic gp_alleles{sample_ploidy};
+        int gp_alleles_sz = record->n_allele + sample_ploidy - 1;
+
+        // Step thorough each element of the gp
+        float *p_gp = gp_buffer.data.get() + i*gp_width;
+        for(int j=0; j < gp_width; ++j, gp_alleles.Next()) {
+            // check for missing and end values
+            if(bcf_float_is_vector_end(p_gp[j])) {
+                break;
+            }
+            if(bcf_float_is_missing(p_gp[j])) {
+                continue;
+            }
+            // step through the alleles for this GP
+            auto alleles = gp_alleles.Get();
+            int pos = 0;
+            for(int h=0; h < gp_alleles_sz; ++h) {
+                // if the lowest bit is 1, we have an allele
+                // if the lowest bit is 0, we move on to the next allele
+                if((alleles&0x1) == 1) {
+                    (*af_buffer)[pos] += p_gp[j];
+                } else {
+                    pos += 1;
+                }
+                // shit to the next bit
+                alleles = alleles >> 1;
+            }
+        }
     }
     return true;
 }
@@ -366,6 +418,18 @@ void update_counts(double a, double b, double weight, std::vector<double> *count
         (*counts)[k] += weight*exp(d);
     }
 }
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("update_counts adds resampled data to a vector") {
+    using namespace Catch::literals;
+    auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon()*100);
+
+    std::vector<double> v = {0.0,0.1};
+    std::vector<Approx> u = {0.0_a,0.1_a};
+
+    CHECK(v==u);
+}
+#endif
 
 // maps a/(a+b) to a bin in the range of [0,N]/N
 // rounds to nearest bin. Thus the bins on the edge may
@@ -565,29 +629,17 @@ TEST_CASE("phred_to_p01 converts a phred value to a [0,1] value.") {
 }
 #endif
 
-template<typename call_back_t>
-void ProgressMessage::operator()(call_back_t call_back, bool force) {
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_);
-    if(elapsed.count() >= next_ || force) {
-        next_ += step_;
-        output_ << "## [" << elapsed.count() << "s elapsed] ";
-        call_back(output_);
-        output_ << std::endl;
-    }
-}
-
 // Output header including program runtime information and options
 void output_header(std::ostream &os, const Sofos &sofos,
-	const std::vector<const char *> &paths)
+    const std::vector<const char *> &paths)
 {
     auto stamp = timestamp();
     os << "#SoFoS v2.0\n";
     os << "#date=" << stamp.first << "\n";
     os << "#epoch=" << stamp.second << "\n";
- 	for(auto &&path : paths) {
-	    os << "#path=" << path << "\n";
- 	}
+    for(auto &&path : paths) {
+        os << "#path=" << path << "\n";
+    }
 
     os << std::setprecision(std::numeric_limits<double>::max_digits10);
     os << "#alpha=" << sofos.params_.alpha << "\n";
@@ -597,7 +649,7 @@ void output_header(std::ostream &os, const Sofos &sofos,
     os << "#refalt=" << (sofos.params_.flag_refalt ? 1 : 0) << "\n";
     
     if(sofos.params_.flag_use_gp) {
-	    os << "#use_gp=" << (sofos.params_.flag_phred_gp ? 2 : 1) << "\n";
+        os << "#use_gp=" << (sofos.params_.flag_phred_gp ? 2 : 1) << "\n";
     }
 
     if(sofos.params_.error_rate > 0.0) {
@@ -612,17 +664,97 @@ void output_header(std::ostream &os, const Sofos &sofos,
     os << "#\n";
 }
 
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("output_header generates a header containing program information") {
+    using Catch::Matchers::StartsWith;
+
+    auto get_header_lines = [](const sofos_params_t &params,
+        const std::vector<const char*> &paths) -> std::vector<std::string>
+    {
+        Sofos sofos{params};
+        std::stringstream str;
+        output_header(str, sofos, paths);
+
+        std::vector<std::string> lines;
+        std::string token;
+        while (std::getline(str, token)) {
+            lines.push_back(token);
+        }
+        return lines;        
+    };
+
+    SECTION("default output") {
+        auto lines = get_header_lines({},{});
+        REQUIRE(lines.size() == 9);
+        for(auto && line : lines){
+            CHECK_THAT(line, StartsWith("#"));
+        }
+    }
+    SECTION("when there is one path") {
+        auto lines = get_header_lines({},{"-"});
+        REQUIRE(lines.size() == 10);
+        for(auto && line : lines){
+            CHECK_THAT(line, StartsWith("#"));
+        }
+    }
+    SECTION("when everything is enabled") {
+        sofos_params_t params;
+        params.flag_use_gp = true;
+        params.flag_phred_gp = true;
+        params.error_rate = 1.0;
+        params.ploidy = 2.1;
+        params.zero_count = 100;
+
+        auto lines = get_header_lines(params,{"-","a","b"});
+        REQUIRE(lines.size() == 16);
+        for(auto && line : lines){
+            CHECK_THAT(line, StartsWith("#"));
+        }
+    }
+}
+#endif
+
+
 // Output body
 void output_body(std::ostream &os, const Sofos &sofos) {
     // output resulting scale
     os << std::setprecision(std::numeric_limits<double>::max_digits10);
     os << "Number,Prior,Observed,Posterior\n";
-    for(int i=0;i< sofos.histogram().posterior().size();++i) {
-        os << i
-           << "," << sofos.histogram().prior()[i]
-           << "," << sofos.histogram().observed()[i]
-           << "," << sofos.histogram().posterior()[i]
-           << "\n";
+    for(int i=0;i< sofos.histogram().num_rows();++i) {
+        auto && row = sofos.histogram().row(i);
+        os << i << "," << row[0] << "," << row[1]
+                << "," << row[2] << "\n";
     }
     os << std::flush;
 }
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("output_body generates a csv table containing column names and values") {
+    sofos_params_t params;
+    params.size = 4;
+    Sofos sofos{params};
+    std::stringstream str;
+    output_body(str, sofos);
+
+    std::vector<std::vector<std::string>> table;
+    std::string line;
+    while(std::getline(str,line,'\n')) {
+        std::stringstream row;
+        row.str(line);
+        std::string token;
+        std::vector<std::string> tokens;
+        while(std::getline(row,token,',')) {
+            tokens.push_back(token);
+        }
+        table.push_back(tokens);
+    }
+
+    REQUIRE(table.size() == 6);
+    CHECK(table[0].size() == 4);
+    CHECK(table[1].size() == 4);
+    CHECK(table[2].size() == 4);
+    CHECK(table[3].size() == 4);
+    CHECK(table[4].size() == 4);
+    CHECK(table[5].size() == 4);
+}
+#endif

@@ -26,19 +26,14 @@ SOFTWARE.
 #include "vcf.hpp"
 
 #include <vector>
+#include <array>
 #include <numeric>
 #include <cassert>
 #include <ostream>
+#include <cassert>
 
 // Globals
 extern bool g_sofos_quiet;
-
-// Flags used to control sofos_main
-constexpr unsigned int SOFOS_FLAG_DEFAULT=0;
-constexpr unsigned int SOFOS_FLAG_FOLDED=1;
-constexpr unsigned int SOFOS_FLAG_REFALT=2;
-constexpr unsigned int SOFOS_FLAG_USE_GP=4;
-constexpr unsigned int SOFOS_FLAG_PHRED_GP=8;
 
 struct sofos_params_t {
     double alpha{1.0};
@@ -52,7 +47,6 @@ struct sofos_params_t {
     bool flag_refalt{false};
     bool flag_use_gp{false};
     bool flag_phred_gp{false};
-
 };
 
 void update_counts(double a, double b, double weight, std::vector<double> *counts);
@@ -71,9 +65,18 @@ public:
 
     void ZeroCounts();
 
-    const std::vector<double>& prior() const { return prior_; }
-    const std::vector<double>& observed() const { return observed_; }
-    const std::vector<double>& posterior() const { return posterior_; }
+    size_t num_rows() const {
+        assert(prior_.size() == size_+1);
+        assert(observed_.size() == size_+1);
+        assert(posterior_.size() == size_+1);
+
+        return size_+1;
+    }
+
+    std::array<double,3> row(size_t i) const {
+        assert(i < num_rows());
+        return {prior_[i],observed_[i],posterior_[i]};
+    }
 
 private:
     int size_;
@@ -83,7 +86,6 @@ private:
     std::vector<double> prior_;
     std::vector<double> observed_;
     std::vector<double> posterior_;
-
 };
 
 class Sofos {
@@ -99,7 +101,7 @@ public:
         int_buffer_ = make_buffer<int32_t>(1);
     }
 
-    void RescaleFile(const char *path);
+    void RescaleBcf(const char *path);
 
     void ResetHistogram() {
         histogram_.ZeroCounts();
