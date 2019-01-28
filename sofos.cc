@@ -46,6 +46,16 @@ SOFTWARE.
 bool g_sofos_quiet = false;
 #else
 bool g_sofos_quiet = true;
+
+struct kstring_obj_t : public kstring_t {
+	kstring_obj_t() : kstring_t{0,0,nullptr} { }
+
+	~kstring_obj_t() {
+		if(s != nullptr) {
+			free(s);
+		}
+	}
+};
 #endif
 
 // calculate allele counts from AC+AN or GT values.
@@ -284,7 +294,15 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 	;
 
 	auto rescale = [&](const sofos_params_t &params, const char* lines) -> SofosHistogram {
-		std::string data = "data:,";
+		std::string data = "data:";
+		{
+			// detect what version of the data string we can use
+			auto p = hts_open("data:,##fileformat=VCFv4.2","r");
+			if(p != nullptr) {
+				hts_close(p);
+				data += ",";
+			}
+		}
 		data += header_str;
 		data += lines;
 		Sofos sofos{params};
@@ -394,6 +412,18 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 		CHECK(hist.col(1) == expected_observed);
 		CHECK(hist.col(2) == expected_posterior);
 	}
+	SECTION("when there is no data") {
+		params.flag_use_gp = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=C;AN=0;AC=0\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.0_a, 0.0_a, 0.0_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
 	SECTION("when use_gp=true and gp_phred=true") {
 		params.flag_use_gp = true;
 		params.flag_phred_gp = true;
@@ -459,6 +489,19 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 		CHECK(hist.col(1) == expected_observed);
 		CHECK(hist.col(2) == expected_posterior);
 	}
+	SECTION("when folded=true") {
+		params.flag_refalt = true;
+		params.flag_folded = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.6666667_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {1.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.7435897_a, 0.25641026_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
 }
 #endif
 
@@ -513,7 +556,7 @@ TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
 	REQUIRE(hret == 0);
 
 	auto parse_aa = [=](const char* line, int* anc) -> bool {
-		kstring_t kstr = {0,0,nullptr};
+		kstring_obj_t kstr;
 		if(kputs(line, &kstr) < 0) {
 			return false;
 		}
@@ -587,7 +630,7 @@ TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
 	REQUIRE(hret == 0);
 
 	auto parse_aaq = [=](const char* line, double* err) -> bool {
-		kstring_t kstr = {0,0,nullptr};
+		kstring_obj_t kstr;
 		if(kputs(line, &kstr) < 0) {
 			return false;
 		}
@@ -653,7 +696,7 @@ TEST_CASE("calculate_ac() calculates allele counts from GT or AC/AN values") {
 	REQUIRE(ret == 0);
 
 	auto parse_ac = [=](const char* line, int ac_which, int sz) -> std::vector<int> {
-		kstring_t kstr = {0,0,nullptr};
+		kstring_obj_t kstr;
 		if(kputs(line, &kstr) < 0) {
 			return {};
 		}
@@ -817,7 +860,7 @@ TEST_CASE("calculate_af() calculates allele counts from GP values") {
 	calculate_af_t calculate_af{3};
 
 	auto parse_gp = [=,&calculate_af](const char* line, bool phread, int sz) -> std::vector<double> {
-		kstring_t kstr = {0,0,nullptr};
+		kstring_obj_t kstr;
 		if(kputs(line, &kstr) < 0) {
 			return {};
 		}
@@ -1300,5 +1343,65 @@ TEST_CASE("output_body generates a csv table containing column names and values"
     CHECK(table[3].size() == 4);
     CHECK(table[4].size() == 4);
     CHECK(table[5].size() == 4);
+}
+#endif
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("Retrieving values from a VCF file") {
+	using Catch::Matchers::Equals;
+	char header_str[] =
+		"##fileformat=VCFv4.2\n"
+		"##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+		"##INFO=<ID=TAG1,Number=.,Type=Integer,Description=\"\">\n"
+		"##INFO=<ID=TAG2,Number=.,Type=Integer,Description=\"\">\n"
+		"##INFO=<ID=TAG3,Number=.,Type=String,Description=\"\">\n"
+		"##contig=<ID=1,length=10000>\n"
+		"#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+	;
+
+	std::unique_ptr<bcf1_t,detail::bcf_free_t> record_{bcf_init()};
+	REQUIRE((record_));
+
+	std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_{bcf_hdr_init("w")};
+	REQUIRE((header_));
+
+	auto header = header_.get();
+	auto record = record_.get();
+
+	int n;
+	int ret = bcf_hdr_parse(header, header_str);
+	REQUIRE(ret == 0);
+	kstring_obj_t kstr;
+
+	SECTION("when reading INFO integer tag") {
+		auto buffer = make_buffer<int32_t>(1);
+		const char line1[] = "1\t1\t.\tA\tC\t.\t.\tTAG1=1;TAG2=1,1,1,1,1,1,1,1,1,1";
+		ret = kputs(line1, &kstr);
+		REQUIRE(ret > 0);
+		ret = vcf_parse(&kstr, header, record);
+		REQUIRE(ret == 0);
+		
+		n = get_info_int32(header, record, "TAG1", &buffer);
+		REQUIRE(n == 1);
+		CHECK(buffer.data[0] == 1);
+		
+		n = get_info_int32(header, record, "TAG2", &buffer);
+		REQUIRE(n == 10);
+		for(int i=0;i<10;++i) {
+			CHECK(buffer.data[i] == 1);
+		}
+	}
+	SECTION("when reading INFO string tag") {
+		auto buffer = make_buffer<char>(1);
+		const char line1[] = "1\t1\t.\tA\tC\t.\t.\tTAG3=aaaaaaaaaaaaaaaaaaaaaaaa";
+		ret = kputs(line1, &kstr);
+		REQUIRE(ret > 0);
+		ret = vcf_parse(&kstr, header, record);
+		REQUIRE(ret == 0);
+		
+		n = get_info_string(header, record, "TAG3", &buffer);
+		REQUIRE(n == 24);
+		CHECK_THAT(buffer.data.get(), Equals("aaaaaaaaaaaaaaaaaaaaaaaa"));
+	}
 }
 #endif

@@ -68,29 +68,28 @@ public:
 
     const bcf_hdr_t* header() const { return header_.get(); }
 
-    template<typename Func>
-    void operator()(Func func);
+    template<typename callback_t>
+    void operator()(callback_t callback);
 
 protected:
     std::unique_ptr<htsFile,detail::file_free_t> input_;
     std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_;
-
 };
 
 
-template<typename Func>
-void BcfReader::operator()(Func func) {
+template<typename callback_t>
+void BcfReader::operator()(callback_t callback) {
     std::unique_ptr<bcf1_t,detail::bcf_free_t> record{bcf_init()};
     if(!record) {
         throw std::invalid_argument("unable to allocate vcf record.");
     }
-
     // begin timer
     size_t nsites = 0;
     auto start = std::chrono::steady_clock::now();
     auto last = start;
+    // process all sites
     while(bcf_read(input_.get(), header_.get(), record.get()) == 0) {
-        func(record.get(), header());
+        callback(record.get(), header());
     }
 }
 

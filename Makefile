@@ -14,6 +14,8 @@ all: sofos
 
 clean:
 	rm -f sofos sofos_debug sofos_test sofos_test_coverage
+	rm -f *.gcov *.gcda *.gcno
+	rm -f coverage*.html
 
 SOFOSCC=sofos.cc main.cc
 SOFOSHPP=sofos.hpp vcf.hpp
@@ -34,8 +36,14 @@ test: sofos_test
 	./sofos_test
 
 coverage: sofos_test_coverage
-	rm -f sofos.gcda
+	rm -f *.gcda
 	./sofos_test_coverage
 	gcovr -r . -e catch.hpp -e test_utils.hpp --html-details -o coverage.html
+
+codecov: sofos_test_coverage
+	rm -f *.gcda
+	./sofos_test_coverage
+	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
+	curl -s https://codecov.io/bash | bash
 
 .PHONY: coverage test

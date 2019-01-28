@@ -14,8 +14,25 @@ jobs:
       - run:
           name: Run Make
           command: 'make clean && make'
+  test:
+    docker:
+      - image: "circleci/python:3.7.1"
+    steps:
+      - checkout
+      - run: 
+          name: Updating Package List
+          command: sudo apt-get update
+      - run:
+          name: Installing htslib
+          command: sudo apt-get install -y libhts1 libhts-dev
+      - run:
+          name: Run Make
+          command: 'make clean && make codecov'
 workflows:
   version: 2
   build_and_test:
     jobs:
       - build
+      - test:
+          requires:
+            - build
