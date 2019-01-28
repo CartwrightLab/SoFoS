@@ -37,3 +37,6 @@ sofos_test_coverage
 *.gcno
 *.gcda
 *.gcov
+
+coverage*.html
+

@@ -49,4 +49,7 @@ codecov: sofos_test_coverage
 tidy:
 	clang-tidy $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall
 
-.PHONY: coverage test codecov tidy
+format:
+	clang-format -i *.cc *.hpp
+
+.PHONY: coverage test codecov tidy format
