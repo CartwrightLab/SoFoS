@@ -31,3 +31,9 @@
 *.out
 *.app
 sofos
+sofos_test
+sofos_test_coverage
+
+*.gcno
+*.gcda
+*.gcov
