@@ -27,11 +27,10 @@ SOFTWARE.
 
 #include "sofos.hpp"
 
-#include <string>
 #include <cstring>
-#include <stdexcept>
 #include <iostream>
-
+#include <stdexcept>
+#include <string>
 #include <unistd.h>
 
 // print a usage message for sofos

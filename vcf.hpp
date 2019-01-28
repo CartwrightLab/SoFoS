@@ -19,43 +19,41 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *****************************************************************************/
-#pragma once
 #ifndef SOFOS_VCF_HPP
 #define SOFOS_VCF_HPP
 
+#include <chrono>
 #include <htslib/vcf.h>
 #include <htslib/vcfutils.h>
-
 #include <memory>
-#include <chrono>
 
 // The *_free_t classes are used enable RAII on pointers created by htslib.
 namespace detail {
 struct buffer_free_t {
     void operator()(void* ptr) const {
-        free(ptr);
+        free(ptr); // NOLINT
     }
 };
 struct file_free_t {
     void operator()(void* ptr) const {
-        hts_close(reinterpret_cast<htsFile*>(ptr));
+        hts_close(static_cast<htsFile*>(ptr));
     }
 };
 struct header_free_t {
     void operator()(void* ptr) const {
-        bcf_hdr_destroy(reinterpret_cast<bcf_hdr_t*>(ptr));
+        bcf_hdr_destroy(static_cast<bcf_hdr_t*>(ptr));
     }
 };
 struct bcf_free_t {
     void operator()(void* ptr) const {
-        bcf_destroy(reinterpret_cast<bcf1_t*>(ptr));
+        bcf_destroy(static_cast<bcf1_t*>(ptr));
     }
 };
-}
+} // namespace detail
 
 class BcfReader {
 public:
-    BcfReader(const char *path) {
+    explicit BcfReader(const char *path) {
         input_.reset(hts_open(path,"r"));
         if(!input_) {
             throw std::runtime_error(std::string{"unable to open input file: '"} + path + "'.");
@@ -83,10 +81,6 @@ void BcfReader::operator()(callback_t callback) {
     if(!record) {
         throw std::invalid_argument("unable to allocate vcf record.");
     }
-    // begin timer
-    size_t nsites = 0;
-    auto start = std::chrono::steady_clock::now();
-    auto last = start;
     // process all sites
     while(bcf_read(input_.get(), header_.get(), record.get()) == 0) {
         callback(record.get(), header());
@@ -95,19 +89,19 @@ void BcfReader::operator()(callback_t callback) {
 
 // Templates and functions for handling buffers used by htslib
 template<typename T>
-struct buffer_t {
+struct buffer_t { // NOLINT(cppcoreguidelines-pro-type-member-init)
     std::unique_ptr<T[],detail::buffer_free_t> data;
-    int capacity;
+    int capacity; 
 };
 
 template<typename T>
 inline
 buffer_t<T> make_buffer(int sz) {
-    void *p = std::malloc(sizeof(T)*sz);
+    void *p = std::malloc(sizeof(T)*sz); // NOLINT(cppcoreguidelines-owning-memory, cppcoreguidelines-no-malloc)
     if(p == nullptr) {
         throw std::bad_alloc{};
     }
-    return {std::unique_ptr<T[], detail::buffer_free_t>{reinterpret_cast<T*>(p)}, sz};
+    return {std::unique_ptr<T[], detail::buffer_free_t>{static_cast<T*>(p)}, sz};
 }
 
 // htslib may call realloc on our pointer. When using a managed buffer,
@@ -117,7 +111,7 @@ int get_info_string(const bcf_hdr_t *header, bcf1_t *record,
     const char *tag, buffer_t<char>* buffer)
 {
     char *p = buffer->data.get();
-    int n = bcf_get_info_string(header, record, tag, &p, &buffer->capacity);
+    int n = bcf_get_info_string(header, record, tag, &p, &buffer->capacity); // NOLINT
     if(n == -4) {
         throw std::bad_alloc{};
     } else if(p != buffer->data.get()) {
@@ -133,7 +127,7 @@ int get_info_int32(const bcf_hdr_t *header, bcf1_t *record,
     const char *tag, buffer_t<int32_t>* buffer)
 {
     int32_t *p = buffer->data.get();
-    int n = bcf_get_info_int32(header, record, tag, &p, &buffer->capacity);
+    int n = bcf_get_info_int32(header, record, tag, &p, &buffer->capacity); // NOLINT
     if(n == -4) {
         throw std::bad_alloc{};
     } else if(p != buffer->data.get()) {
@@ -149,7 +143,7 @@ int get_format_float(const bcf_hdr_t *header, bcf1_t *record,
     const char *tag, buffer_t<float>* buffer)
 {
     float *p = buffer->data.get();
-    int n = bcf_get_format_float(header, record, tag, &p, &buffer->capacity);
+    int n = bcf_get_format_float(header, record, tag, &p, &buffer->capacity); // NOLINT
     if(n == -4) {
         throw std::bad_alloc{};
     } else if(p != buffer->data.get()) {
@@ -165,7 +159,7 @@ int get_genotypes(const bcf_hdr_t *header, bcf1_t *record,
     buffer_t<int32_t>* buffer)
 {
     int32_t *p = buffer->data.get();
-    int n = bcf_get_genotypes(header, record, &p, &buffer->capacity);
+    int n = bcf_get_genotypes(header, record, &p, &buffer->capacity); // NOLINT
     if(n == -4) {
         throw std::bad_alloc{};
     } else if(p != buffer->data.get()) {

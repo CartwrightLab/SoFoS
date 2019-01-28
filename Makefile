@@ -46,4 +46,7 @@ codecov: sofos_test_coverage
 	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
 	bash -c 'bash <(curl -s https://codecov.io/bash)'
 
-.PHONY: coverage test
+tidy:
+	clang-tidy $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall
+
+.PHONY: coverage test codecov tidy

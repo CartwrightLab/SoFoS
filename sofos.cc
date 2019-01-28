@@ -27,20 +27,19 @@ SOFTWARE.
 #include <sstream>
 #endif
 
-#include <unistd.h>
-
 #include "sofos.hpp"
 #include "vcf.hpp"
 
-#include <iostream>
-#include <iomanip>
-#include <string>
-#include <vector>
-#include <cmath>
-#include <limits>
 #include <chrono>
-#include <numeric>
+#include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <limits>
 #include <locale>
+#include <numeric>
+#include <string>
+#include <unistd.h>
+#include <vector>
 
 #ifndef SOFOS_UNIT_TESTS
 bool g_sofos_quiet = false;
@@ -63,7 +62,7 @@ bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::ve
 
 // a functor to calculate allele counts from GP values
 struct calculate_af_t {
-    calculate_af_t(int nsamples) {
+    explicit calculate_af_t(int nsamples) {
         gp_buffer = make_buffer<float>(3*nsamples);
         gt_buffer = make_buffer<int32_t>(2*nsamples);
     }
@@ -102,7 +101,7 @@ double phred_to_p01(int x);
 // https://en.wikipedia.org/wiki/Combinatorial_number_system
 class Combinadic {
 public:
-    Combinadic(int ploidy) {
+    explicit Combinadic(int ploidy) : data_{0} {
         Reset(ploidy);
     }
 
@@ -110,23 +109,23 @@ public:
     void Reset(int ploidy) {
         data_ = 0;
         for(int j = 0; j < ploidy; ++j) {
-            data_ = (data_ << 1) | 1;
+            data_ = (data_ << 1) | 0x1u;
         }
     }
 
     // Permute the k-combination to the next highest value
     void Next() {
         // Gosper's Hack
-        unsigned long long u = data_ & -data_;
-        unsigned long long v = u + data_;
+        uint64_t u = data_ & -data_;
+        uint64_t v = u + data_;
         data_ = v + (((v^data_)/u)>>2);
     }
 
     // Access an integer representing a k-combination
-    unsigned long long Get() const { return data_; }
+    uint64_t Get() const { return data_; }
 
 protected:
-    unsigned long long data_;
+    uint64_t data_;
 };
 
 #ifdef SOFOS_UNIT_TESTS
@@ -155,7 +154,7 @@ TEST_CASE("Combinadic generates the combinatorial number system") {
 // Utility class to output a message every X number of seconds
 class ProgressMessage {
 public:
-    ProgressMessage(std::ostream& os, int step) : step_{step}, next_{step}, output_{os} {
+    ProgressMessage(std::ostream& os, int step) : output_{os}, step_{step}, next_{step} {
         start_ = std::chrono::steady_clock::now();
     }
 
@@ -928,8 +927,7 @@ std::pair<std::string, std::string> timestamp() {
     char buffer[32];
     auto now = std::chrono::system_clock::now();
     auto now_t = std::chrono::system_clock::to_time_t(now);
-    size_t sz = std::strftime(buffer, 32, "%FT%T%z",
-                         std::localtime(&now_t));
+    std::strftime(&buffer[0], 32, "%FT%T%z", std::localtime(&now_t));
     auto epoch = std::chrono::duration_cast<std::chrono::milliseconds>(
                      now.time_since_epoch());
     return {buffer, std::to_string(epoch.count())};
@@ -1144,7 +1142,7 @@ double quality_to_p01(int x) {
         0.999999996, 0.999999997, 0.999999997, 0.999999998, 0.999999998, 0.999999999,
         0.999999999, 0.999999999, 0.999999999, 0.999999999, 1.000000000, 1.000000000
     };
-    return (x < 96) ? data[x] : 1.0;
+    return (x < 96) ? data[x] : 1.0; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 }
 
 inline
@@ -1168,7 +1166,7 @@ double phred_to_p01(int x) {
         0.000000004, 0.000000003, 0.000000003, 0.000000002, 0.000000002, 0.000000001,
         0.000000001, 0.000000001, 0.000000001, 0.000000001, 0.000000000, 0.000000000
     };
-    return (x < 96) ? data[x] : 0.0;
+    return (x < 96) ? data[x] : 0.0; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 }
 
 

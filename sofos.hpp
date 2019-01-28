@@ -19,18 +19,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *****************************************************************************/
-#pragma once
 #ifndef SOFOS_SOFOS_HPP
 #define SOFOS_SOFOS_HPP
 
 #include "vcf.hpp"
 
-#include <vector>
 #include <array>
+#include <cassert>
 #include <numeric>
-#include <cassert>
 #include <ostream>
-#include <cassert>
+#include <vector>
 
 // Globals
 extern bool g_sofos_quiet;
@@ -100,7 +98,7 @@ private:
 
 class Sofos {
 public:
-    Sofos(const sofos_params_t& params) : params_{params},
+    explicit Sofos(const sofos_params_t& params) : params_{params},
         histogram_{params.size, params.alpha, params.beta}
     {
         assert(0.0 <= params.error_rate && params.error_rate <= 1.0);
