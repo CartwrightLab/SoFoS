@@ -77,6 +77,16 @@ public:
         assert(i < num_rows());
         return {prior_[i],observed_[i],posterior_[i]};
     }
+    const std::vector<double> & col(size_t i) const {
+        assert(i < 3);
+        if(i == 0) {
+            return prior_;
+        } else if(i == 1) {
+            return observed_;
+        } else {
+            return posterior_;
+        }
+    }
 
 private:
     int size_;
@@ -96,9 +106,6 @@ public:
         assert(0.0 <= params.error_rate && params.error_rate <= 1.0);
         assert(params.zero_count >= 0.0);
         assert(params.ploidy >= 0.0);
-
-        char_buffer_ = make_buffer<char>(64);
-        int_buffer_ = make_buffer<int32_t>(1);
     }
 
     void RescaleBcf(const char *path);
@@ -111,8 +118,6 @@ public:
 
     const SofosHistogram histogram() const { return histogram_; }
 
-    std::pair<int,double> GetAncestor(bcf1_t *record, const bcf_hdr_t *header);
-
     // This is a template in case SofosHistogram::AddCounts becomes an overloaded function
     template<typename T>
     void AddCounts(const std::vector<T> &counts, int anc, double error_rate);
@@ -121,9 +126,6 @@ private:
     sofos_params_t params_;
 
     SofosHistogram histogram_;
-
-    buffer_t<char> char_buffer_;
-    buffer_t<int32_t> int_buffer_;
 
 public:
     friend void output_header(std::ostream &os, const Sofos &sofos,
@@ -211,6 +213,16 @@ void Sofos::FinishHistogram() {
     }
 }
 
+// folds the histogram so that the second half is added to the first half.
+// handles both odd and even vector sizes.
+inline
+void fold_histogram(std::vector<double> *counts) {
+    assert(counts != nullptr);
+    for(int k=0;k<counts->size()/2;++k) {
+        (*counts)[k] += (*counts)[counts->size()-k-1];
+    }
+    counts->resize((counts->size()+1)/2);
+}
 
 
 #endif // SOFOS_SOFOS_HPP

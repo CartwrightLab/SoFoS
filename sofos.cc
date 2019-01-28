@@ -42,7 +42,11 @@ SOFTWARE.
 #include <numeric>
 #include <locale>
 
+#ifndef SOFOS_UNIT_TESTS
 bool g_sofos_quiet = false;
+#else
+bool g_sofos_quiet = true;
+#endif
 
 // calculate allele counts from AC+AN or GT values.
 bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer);
@@ -58,6 +62,22 @@ struct calculate_af_t {
     // reusable buffers
     buffer_t<float> gp_buffer;
     buffer_t<int32_t> gt_buffer;
+};
+
+struct calculate_aa_t {
+	calculate_aa_t() : char_buffer_{make_buffer<char>(64)} {}
+
+	bool operator()(bcf1_t *record, const bcf_hdr_t *header, int *anc_allele);
+
+    buffer_t<char> char_buffer_;
+};
+
+struct calculate_aaq_t {
+	calculate_aaq_t() : int_buffer_{make_buffer<int32_t>(1)} {}
+
+	bool operator()(bcf1_t *record, const bcf_hdr_t *header, double *error_rate);
+
+    buffer_t<int32_t> int_buffer_;
 };
 
 std::pair<std::string, std::string> timestamp();
@@ -170,6 +190,8 @@ void Sofos::RescaleBcf(const char *path) {
     }
     // resize the gp and gt buffers
     calculate_af_t calculate_af(nsamples);
+    calculate_aa_t calculate_aa{};
+    calculate_aaq_t calculate_aaq{};
 
     // Setup for reading AC tags
     int ac_which = BCF_UN_FMT;
@@ -191,12 +213,16 @@ void Sofos::RescaleBcf(const char *path) {
         // identify which allele is ancestral and its error rate
         int anc = 0;
         double error_rate = params_.error_rate;
-        std::tie(anc,error_rate) = GetAncestor(record, header);
-        // skip line on failure
-        if(anc == -1) {
-            return;
+        if(params_.flag_refalt == false) {
+        	if(calculate_aa(record, header, &anc) == false) {
+        		// skip line on failure
+        		return;
+        	}
+        	if(error_rate == 0.0) {
+        		// check for AAQ tag
+        		calculate_aaq(record, header, &error_rate);
+        	}
         }
-
         if(!params_.flag_use_gp) {
             // Calculate the counts of each allele from the AC/AN tags or directly from GT.
             if(!calculate_ac(record, header, ac_which, &ac_buffer)) {
@@ -240,43 +266,229 @@ void Sofos::RescaleBcf(const char *path) {
     }
 }
 
-// Determine the ancestral allele and its error rate
-std::pair<int,double> Sofos::GetAncestor(bcf1_t *record, const bcf_hdr_t *header) {
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
+    using namespace Catch::literals;
+
+	char header_str[] =
+		"##fileformat=VCFv4.2\n"
+		"##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+		"##INFO=<ID=AA,Number=1,Type=String,Description=\"Ancestral Allele\">\n"
+		"##INFO=<ID=AAQ,Number=1,Type=Integer,Description=\"AA Quality\">\n"
+		"##INFO=<ID=AC,Number=A,Type=Integer,Description=\"Allele count in genotypes\">\n"
+		"##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total number of alleles in called genotypes\">\n"
+		"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+		"##FORMAT=<ID=GP,Number=G,Type=Float,Description=\"Genotype Posteriors\">\n"
+		"##contig=<ID=1,length=10000>\n"
+		"#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+	;
+
+	auto rescale = [&](const sofos_params_t &params, const char* lines) -> SofosHistogram {
+		std::string data = "data:,";
+		data += header_str;
+		data += lines;
+		Sofos sofos{params};
+		sofos.RescaleBcf(data.c_str());
+		sofos.FinishHistogram();
+		return sofos.histogram();
+	};
+
+	sofos_params_t params;
+	params.size=2;
+
+	SECTION("when refalt=false") {
+		params.flag_refalt = false;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=9\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {1.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.70512821_a, 0.25641026_a, 0.03846154_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when refalt=false AA is missing") {
+		params.flag_refalt = false;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAN=10;AC=9\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.0_a, 0.0_a, 0.0_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when refalt=true") {
+		params.flag_refalt = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {1.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.70512821_a, 0.25641026_a, 0.03846154_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when AC and GT are missing") {
+		params.flag_refalt = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\t.\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.0_a, 0.0_a, 0.0_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when there are two sites") {
+		params.flag_refalt = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAN=10;AC=1\n"
+			"1\t2\t.\tA\tC\t.\t.\tAN=10;AC=5\n"
+			;
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.6666667_a, 0.6666667_a, 0.6666667_a};
+		std::vector<Approx> expected_observed = {1.0_a, 1.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.9743590_a, 0.7179487_a, 0.3076923_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when use_gp=true") {
+		params.flag_use_gp = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT:GP\t0/0:1,0,0\t0/1:0,1,0\t1/1:0,0,1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {0.0_a, 1.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.2777778_a, 0.4444444_a, 0.2777778_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when use_gp=true and GP is missing") {
+		params.flag_use_gp = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT\t0/0\t0/1\t1/1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.0_a, 0.0_a, 0.0_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when use_gp=true and GT is missing") {
+		params.flag_use_gp = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGP\t1,0,0\t0,1,0\t0,0,1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.0_a, 0.0_a, 0.0_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when use_gp=true and gp_phred=true") {
+		params.flag_use_gp = true;
+		params.flag_phred_gp = true;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT:GP\t0/0:0,100,100\t0/1:100,0,100\t1/1:100,100,0\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {0.0_a, 1.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {0.2777778_a, 0.4444444_a, 0.2777778_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when zero_count is specified") {
+		params.flag_refalt = true;
+		params.zero_count = 1.0;
+		params.ploidy = 10.0/3.0;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.6666667_a, 0.6666667_a, 0.6666667_a};
+		std::vector<Approx> expected_observed = {2.0_a, 0.0_a, 0.0_a};
+		std::vector<Approx> expected_posterior = {1.55128205_a, 0.39743590_a, 0.05128205_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when error_rate is specified") {
+		params.flag_refalt = false;
+		params.error_rate = 0.5;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {0.5_a, 0.0_a, 0.5_a};
+		std::vector<Approx> expected_posterior = {0.3717949_a, 0.2564103_a, 0.3717949_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when AAQ is specified") {
+		params.flag_refalt = false;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1;AAQ=3\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed =  {0.4988128_a, 0.0_a, 0.5011872_a};
+		std::vector<Approx> expected_posterior = {0.3710034_a, 0.2564103_a, 0.3725864_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+	SECTION("when AAQ and error_rate are specified") {
+		params.flag_refalt = false;
+		params.error_rate = 0.5;
+		const char str[] = 
+			"1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1;AAQ=10\n";
+		auto hist = rescale(params, str);
+		std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
+		std::vector<Approx> expected_observed = {0.5_a, 0.0_a, 0.5_a};
+		std::vector<Approx> expected_posterior = {0.3717949_a, 0.2564103_a, 0.3717949_a};
+		CHECK(hist.col(0) == expected_prior);
+		CHECK(hist.col(1) == expected_observed);
+		CHECK(hist.col(2) == expected_posterior);
+	}
+}
+#endif
+
+// Determine the ancestral allele
+bool
+calculate_aa_t::operator()(bcf1_t *record, const bcf_hdr_t *header, int *anc_allele) {
     assert(record != nullptr);
     assert(header != nullptr);
+    assert(anc_allele != nullptr);
 
-    double error_rate = params_.error_rate;
-    // identify which allele is ancestral
-    // if REFALT is specified, assume 0 is the ancestral allele.
-    int anc = 0;
-    if(!params_.flag_refalt) {
-        // If REFALT is not specified, use the AA tag
-        int n = get_info_string(header, record, "AA", &char_buffer_);
-        if(n <= 0) {
-            // missing, unknown, or empty tag
-            return {-1,0.0};
-        }
-        // If error_rate is missing, try to look for an AAQ tag
-        if(error_rate == 0.0) {
-            n = get_info_int32(header, record, "AAQ", &int_buffer_);
-            if(n > 0) {
-                error_rate = phred_to_p01(int_buffer_.data[0]);
-            }
-        }
-        // Compare the AA tag to the refalt allele to find the index of the ancestral allele
-        // If this fails, anc = n_allele
-        bcf_unpack(record, BCF_UN_STR);
-        for(anc=0;anc<record->n_allele;++anc) {
-            if(strcmp(char_buffer_.data.get(), record->d.allele[anc]) == 0) {
-                break;
-            }
+    int n = get_info_string(header, record, "AA", &char_buffer_);
+    if(n <= 0) {
+        // missing, unknown, or empty tag
+        return false;
+    }
+    // Compare the AA tag to the refalt allele to find the index of the ancestral allele
+    // If this fails, anc = n_allele
+    bcf_unpack(record, BCF_UN_STR);
+    int anc;
+    for(anc=0;anc<record->n_allele;++anc) {
+        if(strcmp(char_buffer_.data.get(), record->d.allele[anc]) == 0) {
+            break;
         }
     }
-    return {anc, error_rate};
+    *anc_allele = anc;
+    return true;
 }
 
 #ifdef SOFOS_UNIT_TESTS
-TEST_CASE("Sofos::GetAncestor() calculates the ancestral allele id and error rate") {
+TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
     using namespace Catch::literals;
 
 	char header_str[] =
@@ -297,10 +509,10 @@ TEST_CASE("Sofos::GetAncestor() calculates the ancestral allele id and error rat
 	auto header = header_.get();
 	auto record = record_.get();
 
-	int ret = bcf_hdr_parse(header, header_str);
-	REQUIRE(ret == 0);
+	int hret = bcf_hdr_parse(header, header_str);
+	REQUIRE(hret == 0);
 
-	auto parse_aa = [=](const char* line, const sofos_params_t &params, int* anc, double* error_rate) -> bool {
+	auto parse_aa = [=](const char* line, int* anc) -> bool {
 		kstring_t kstr = {0,0,nullptr};
 		if(kputs(line, &kstr) < 0) {
 			return false;
@@ -309,72 +521,97 @@ TEST_CASE("Sofos::GetAncestor() calculates the ancestral allele id and error rat
 		if(ret != 0) {
 			return false;
 		}
-		
-		Sofos sofos{params};
-		std::tie(*anc, *error_rate) = sofos.GetAncestor(record, header);
-		return true;
+		calculate_aa_t calculate_aa;
+
+		return calculate_aa(record, header, anc);
 	};
-
-	sofos_params_t params;
 	int anc;
+	bool ret;
+
+	ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=A", &anc);
+	REQUIRE(ret == true);
+	CHECK(anc == 0);
+
+	ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", &anc);
+	REQUIRE(ret == true);
+	CHECK(anc == 1);
+
+	ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=G", &anc);
+	REQUIRE(ret == true);
+	CHECK(anc == 2);
+
+	ret = parse_aa("1\t1\t.\tA\tC\t.\t.\t.", &anc);
+	REQUIRE(ret == false);
+}
+#endif
+
+// Determine ancestral error rate
+bool
+calculate_aaq_t::operator()(bcf1_t *record, const bcf_hdr_t *header, double *error_rate) {
+    assert(record != nullptr);
+    assert(header != nullptr);
+    assert(error_rate != nullptr);
+
+    // If error_rate is missing, try to look for an AAQ tag
+    int n = get_info_int32(header, record, "AAQ", &int_buffer_);
+    if(n <= 0) {
+    	return false;
+    }
+    *error_rate = phred_to_p01(int_buffer_.data[0]);
+    return true;
+}
+
+#ifdef SOFOS_UNIT_TESTS
+TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
+    using namespace Catch::literals;
+
+	char header_str[] =
+		"##fileformat=VCFv4.2\n"
+		"##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+		"##INFO=<ID=AA,Number=1,Type=String,Description=\"Ancestral Allele\">\n"
+		"##INFO=<ID=AAQ,Number=1,Type=Integer,Description=\"AA Quality\">\n"
+		"##contig=<ID=1,length=10000>\n"
+		"#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+	;
+
+	std::unique_ptr<bcf1_t,detail::bcf_free_t> record_{bcf_init()};
+	REQUIRE((record_));
+
+	std::unique_ptr<bcf_hdr_t,detail::header_free_t> header_{bcf_hdr_init("w")};
+	REQUIRE((header_));
+
+	auto header = header_.get();
+	auto record = record_.get();
+
+	int hret = bcf_hdr_parse(header, header_str);
+	REQUIRE(hret == 0);
+
+	auto parse_aaq = [=](const char* line, double* err) -> bool {
+		kstring_t kstr = {0,0,nullptr};
+		if(kputs(line, &kstr) < 0) {
+			return false;
+		}
+		int ret = vcf_parse(&kstr, header, record);
+		if(ret != 0) {
+			return false;
+		}
+		calculate_aaq_t calculate_aaq;
+
+		return calculate_aaq(record, header, err);
+	};
 	double error_rate;
+	bool ret;
 
-	SECTION("when refalt==true and error_rate!=0.0") {
-		params.flag_refalt = true;
-		params.error_rate = 0.1;
-		bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", params, &anc, &error_rate);
-		REQUIRE(ret);
+	ret = parse_aaq("1\t1\t.\tA\tC\t.\t.\tAAQ=10", &error_rate);
+	REQUIRE(ret == true);
+	CHECK(error_rate == 0.1_a);
 
-		CHECK(anc == 0);
-		CHECK(error_rate == 0.1);
-	}
-	SECTION("when refalt==false and error_rate!=0.0") {
-		params.flag_refalt = false;
-		params.error_rate = 0.1;
-		SECTION("when AA is known") {
-			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", params, &anc, &error_rate);
-			REQUIRE(ret);
-			CHECK(anc == 1);
-			CHECK(error_rate == 0.1);
-		}
+	ret = parse_aaq("1\t1\t.\tA\tC\t.\t.\tAAQ=100", &error_rate);
+	REQUIRE(ret == true);
+	CHECK(error_rate == 0.0);
 
-		SECTION("when AA is not known") {
-			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=G", params, &anc, &error_rate);
-			REQUIRE(ret);
-			CHECK(anc == 2);
-			CHECK(error_rate == 0.1);			
-		}
-
-		SECTION("when AA is missing") {
-			ret = parse_aa("1\t1\t.\tA\tC\t.\t.\t.", params, &anc, &error_rate);
-			REQUIRE(ret);
-			CHECK(anc == -1);
-			CHECK(error_rate == 0.0);
-		}
-
-		SECTION("when AAQ is specified") {
-			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C;AAQ=40", params, &anc, &error_rate);
-			REQUIRE(ret);
-			CHECK(anc == 1);
-			CHECK(error_rate == 0.1);
-		}
-	}
-	SECTION("when refalt==false and error_rate==0.0") {
-		params.flag_refalt = false;
-		params.error_rate = 0.0;
-		SECTION("when AAQ is specified") {
-			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=A;AAQ=40", params, &anc, &error_rate);
-			REQUIRE(ret);
-			CHECK(anc == 0);
-			CHECK(error_rate == 0.0001_a);
-		}
-		SECTION("when AAQ is missing") {
-			bool ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=C", params, &anc, &error_rate);
-			REQUIRE(ret);
-			CHECK(anc == 1);
-			CHECK(error_rate == 0.0);
-		}
-	}
+	ret = parse_aaq("1\t1\t.\tA\tC\t.\t.\t.", &error_rate);
+	REQUIRE(ret == false);
 }
 #endif
 
@@ -517,9 +754,7 @@ bool calculate_af_t::operator()(bcf1_t *record, const bcf_hdr_t *header, bool ph
                 break;
             }
         }
-        // htslib does not distinguish between a haploid sample with missing gt
-        // and a sample with zero ploidy
-        if(sample_ploidy == 0 || (sample_ploidy == 1 && bcf_gt_is_missing(p_gt[0]))) {
+        if(sample_ploidy == 0) {
             continue;
         }
         // Setup a sequence of k-permutations
@@ -634,12 +869,10 @@ TEST_CASE("calculate_af() calculates allele counts from GP values") {
 	}
 
 	SECTION("when GT has missing values") {
-		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t./.:0.9,0.1,0.0\t./.:0.8,0.1,0.1\t.:0.7,0.1,0.2", false, 2);
-		std::vector<Approx> expected = {3.6_a,0.4_a};
+		auto ac = parse_gp("1\t1\t.\tA\tC\t.\t.\t.\tGT:GP\t./.:0.9,0.1,0.0\t./.:0.8,0.1,0.1\t.:0.9,0.1", false, 2);
+		std::vector<Approx> expected = {4.5_a,0.5_a};
 		CHECK(ac == expected);
 	}
-
-
 }
 #endif
 
@@ -812,17 +1045,6 @@ TEST_CASE("update_bins maps a/(a+b) to a bin in the range of [0,N]/N") {
     }    
 }
 #endif
-
-// folds the histogram so that the second half is added to the first half.
-// handles both odd and even vector sizes.
-inline
-void fold_histogram(std::vector<double> *counts) {
-    assert(counts != nullptr);
-    for(int k=0;k<counts->size()/2;++k) {
-        (*counts)[k] += (*counts)[counts->size()-k-1];
-    }
-    counts->resize((counts->size()+1)/2);
-}
 
 #ifdef SOFOS_UNIT_TESTS
 TEST_CASE("fold_histogram folds second half of a vector onto the first") {
