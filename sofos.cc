@@ -299,8 +299,10 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 			// detect what version of the data string we can use
 			auto p = hts_open("data:,##fileformat=VCFv4.2","r");
 			if(p != nullptr) {
+				if(p->format.format == vcf) {
+					data += ",";
+				}
 				hts_close(p);
-				data += ",";
 			}
 		}
 		data += header_str;

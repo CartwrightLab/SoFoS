@@ -44,6 +44,6 @@ codecov: sofos_test_coverage
 	rm -f *.gcda
 	./sofos_test_coverage
 	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
-	curl -s https://codecov.io/bash | bash
+	bash -c 'bash <(curl -s https://codecov.io/bash)'
 
 .PHONY: coverage test
