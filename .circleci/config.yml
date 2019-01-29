@@ -27,7 +27,7 @@ jobs:
           command: sudo apt-get install -y libhts1 libhts-dev
       - run:
           name: Run Tests and Code Coverage
-          command: 'make clean && make codecov'
+          command: 'make clean && make test_codecov'
       - run:
           name: Run Clang Tidy Tests
           command: 'make test_tidy'
