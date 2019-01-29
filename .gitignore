@@ -31,8 +31,10 @@
 *.out
 *.app
 sofos
-sofos_test
-sofos_test_coverage
+sofos_debug
+sofos_coverage
+unittest
+unittest_coverage
 
 *.gcno
 *.gcda

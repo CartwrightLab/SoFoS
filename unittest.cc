@@ -73,6 +73,8 @@ TEST_CASE("Combinadic generates the combinatorial number system") {
 TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     using namespace Catch::literals;
 
+    g_sofos_quiet = true;
+
     char header_str[] =
         "##fileformat=VCFv4.2\n"
         "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
