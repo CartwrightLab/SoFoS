@@ -59,7 +59,7 @@ coverage: sofos_coverage unittest_coverage
 
 test_codecov: sofos_unittest_coverage sofos_coverage
 	rm -f *.gcda
-	./sofos_unittest_coverage
+	./unittest_coverage
 	cd test && bash test-01.bash ../sofos_coverage
 	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
 	bash -c 'bash <(curl -s https://codecov.io/bash)'
