@@ -5,7 +5,7 @@ jobs:
       - image: "circleci/python:3.7.1"
     steps:
       - checkout
-      - run: 
+      - run:
           name: Updating Package List
           command: sudo apt-get update
       - run:
@@ -19,7 +19,21 @@ jobs:
       - image: "circleci/python:3.7.1"
     steps:
       - checkout
-      - run: 
+      - run:
+          name: Updating Package List
+          command: sudo apt-get update
+      - run:
+          name: Installing htslib
+          command: sudo apt-get install -y libhts1 libhts-dev
+      - run:
+          name: Run Tests and Code Coverage
+          command: 'make clean && make test_codecov'
+  tidy:
+    docker:
+      - image: "circleci/python:3.7.1"
+    steps:
+      - checkout
+      - run:
           name: Updating Package List
           command: sudo apt-get update
       - run:
@@ -27,13 +41,24 @@ jobs:
           command: sudo apt-get install -y libhts1 libhts-dev
       - run:
           name: Installing clang tools
-          command: sudo apt-get install -y clang-tools-4.0 clang-tidy-4.0 clang-format-4.0
-      - run:
-          name: Run Tests and Code Coverage
-          command: 'make clean && make test_codecov'
+          command: sudo apt-get install -y clang-tools-4.0 clang-tidy-4.0
       - run:
           name: Run Clang Tidy Tests
           command: 'make test_tidy CLANGTIDY=clang-tidy-4.0'
+  format:
+    docker:
+      - image: "circleci/python:3.7.1"
+    steps:
+      - checkout
+      - run:
+          name: Updating Package List
+          command: sudo apt-get update
+      - run:
+          name: Installing htslib
+          command: sudo apt-get install -y libhts1 libhts-dev
+      - run:
+          name: Installing clang tools
+          command: sudo apt-get install -y clang-tools-4.0 clang-format-4.0
       - run:
           name: Run Clang Format Tests
           command: 'make test_format CLANGFORMAT=clang-format-4.0'
@@ -43,5 +68,11 @@ workflows:
     jobs:
       - build
       - test:
+          requires:
+            - build
+      - tidy:
+          requires:
+            - build
+      - format:
           requires:
             - build

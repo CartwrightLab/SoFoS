@@ -56,10 +56,14 @@ tidy:
 format:
 	$(CLANGFORMAT) -i $(SOFOSCC) $(SOFOSHPP) $(SOFOSTESTHPP)
 
-test_format: sofos_test_coverage
-	test 0 -eq `$(CLANGFORMAT) -output-replacements-xml $(FORMATFILES) 2>/dev/null | grep offset | wc -l`
+test_format:
+	@echo 'Testing for code format issues...'
+	@bash -c 'diff -u <(cat $(FORMATFILES)) <($(CLANGFORMAT) $(FORMATFILES) 2>/dev/null) | tee clang-format.patch'
+	@test 0 -eq `cat clang-format.patch | wc -l`
 
-test_tidy: sofos_test_coverage
-	test 0 -eq `$(CLANGTIDY) $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall 2>/dev/null | wc -l`
+test_tidy:
+	@echo 'Analyzing code for potential problems...'
+	@$(CLANGTIDY) $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall 2>/dev/null | tee clang-tidy.txt
+	@test 0 -eq `cat clang-tidy.txt | wc -l`
 
 .PHONY: coverage tidy format test test_codecov test_format
