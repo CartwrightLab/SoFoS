@@ -16,9 +16,10 @@ all: sofos
 .PHONY: default all clean
 
 clean:
-	rm -f sofos sofos_debug sofos_test sofos_test_coverage
+	rm -f sofos sofos_debug sofos_test sofos_test_coverage sofos_coverage
 	rm -f *.gcov *.gcda *.gcno
 	rm -f coverage*.html
+	rm -f clang-tidy.txt clang-format.patch
 
 SOFOSCC=sofos.cc main.cc
 SOFOSHPP=sofos.hpp vcf.hpp
@@ -36,17 +37,23 @@ sofos_test: $(SOFOSCC) $(SOFOSHPP)
 sofos_test_coverage: $(SOFOSCC) $(SOFOSHPP)
 	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
 
-test: sofos_test
-	./sofos_test
+sofos_coverage: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -o $@ $(SOFOSCC)
 
-coverage: sofos_test_coverage
+test: sofos_test sofos_debug
+	./sofos_test
+	cd test && bash test-01.bash ../sofos_debug
+
+coverage: sofos_test_coverage sofos_coverage
 	rm -f *.gcda
 	./sofos_test_coverage
+	cd test && bash test-01.bash ../sofos_coverage	
 	gcovr -r . -e catch.hpp -e test_utils.hpp --html-details -o coverage.html
 
-test_codecov: sofos_test_coverage
+test_codecov: sofos_test_coverage sofos_coverage
 	rm -f *.gcda
 	./sofos_test_coverage
+	cd test && bash test-01.bash ../sofos_coverage	
 	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
 	bash -c 'bash <(curl -s https://codecov.io/bash)'
 

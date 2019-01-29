@@ -36,7 +36,7 @@ extern bool g_sofos_quiet;
 struct sofos_params_t {
     double alpha{1.0};
     double beta{1.0};
-    int size{9};
+    int size{10};
     double error_rate{0.0};
     double zero_count{0.0};
     double ploidy{2.0};

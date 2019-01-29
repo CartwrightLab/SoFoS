@@ -283,7 +283,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
         "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
         "##FORMAT=<ID=GP,Number=G,Type=Float,Description=\"Genotype Posteriors\">\n"
         "##contig=<ID=1,length=10000>\n"
-        "#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     auto rescale = [&](const sofos_params_t &params, const char *lines) -> SofosHistogram {
         std::string data = "data:";
@@ -518,7 +518,7 @@ TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
         "##INFO=<ID=AA,Number=1,Type=String,Description=\"Ancestral Allele\">\n"
         "##INFO=<ID=AAQ,Number=1,Type=Integer,Description=\"AA Quality\">\n"
         "##contig=<ID=1,length=10000>\n"
-        "#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
     REQUIRE((record_));
@@ -590,7 +590,7 @@ TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
         "##INFO=<ID=AA,Number=1,Type=String,Description=\"Ancestral Allele\">\n"
         "##INFO=<ID=AAQ,Number=1,Type=Integer,Description=\"AA Quality\">\n"
         "##contig=<ID=1,length=10000>\n"
-        "#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
     REQUIRE((record_));
@@ -655,7 +655,7 @@ TEST_CASE("calculate_ac() calculates allele counts from GT or AC/AN values") {
         "##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total number of alleles in called genotypes\">\n"
         "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
         "##contig=<ID=1,length=10000>\n"
-        "#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
     REQUIRE((record_));
@@ -817,7 +817,7 @@ TEST_CASE("calculate_af() calculates allele counts from GP values") {
         "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
         "##FORMAT=<ID=GP,Number=G,Type=Float,Description=\"Genotype Posterior\">\n"
         "##contig=<ID=1,length=10000>\n"
-        "#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
     REQUIRE((record_));
@@ -1306,7 +1306,7 @@ TEST_CASE("Retrieving values from a VCF file") {
         "##INFO=<ID=TAG2,Number=.,Type=Integer,Description=\"\">\n"
         "##INFO=<ID=TAG3,Number=.,Type=String,Description=\"\">\n"
         "##contig=<ID=1,length=10000>\n"
-        "#CHROM\tPOS\tID\tREFt\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
     REQUIRE((record_));
