@@ -36,7 +36,7 @@ extern bool g_sofos_quiet;
 struct sofos_params_t {
     double alpha{1.0};
     double beta{1.0};
-    int    size{9};
+    int size{9};
     double error_rate{0.0};
     double zero_count{0.0};
     double ploidy{2.0};
@@ -52,7 +52,7 @@ void update_bins(double a, double b, double weight, std::vector<double> *counts)
 void fold_histogram(std::vector<double> *counts);
 
 class SofosHistogram {
-public:
+   public:
     SofosHistogram(int size, double alpha, double beta);
 
     void AddCounts(double num_derived_copies, double num_ancestral_copies, double weight);
@@ -64,18 +64,18 @@ public:
     void ZeroCounts();
 
     size_t num_rows() const {
-        assert(prior_.size() == size_+1);
-        assert(observed_.size() == size_+1);
-        assert(posterior_.size() == size_+1);
+        assert(prior_.size() == size_ + 1);
+        assert(observed_.size() == size_ + 1);
+        assert(posterior_.size() == size_ + 1);
 
-        return size_+1;
+        return size_ + 1;
     }
 
-    std::array<double,3> row(size_t i) const {
+    std::array<double, 3> row(size_t i) const {
         assert(i < num_rows());
-        return {prior_[i],observed_[i],posterior_[i]};
+        return {prior_[i], observed_[i], posterior_[i]};
     }
-    const std::vector<double> & col(size_t i) const {
+    const std::vector<double> &col(size_t i) const {
         assert(i < 3);
         if(i == 0) {
             return prior_;
@@ -86,7 +86,7 @@ public:
         }
     }
 
-private:
+   private:
     int size_;
     double alpha_;
     double beta_;
@@ -97,10 +97,8 @@ private:
 };
 
 class Sofos {
-public:
-    explicit Sofos(const sofos_params_t& params) : params_{params},
-        histogram_{params.size, params.alpha, params.beta}
-    {
+   public:
+    explicit Sofos(const sofos_params_t &params) : params_{params}, histogram_{params.size, params.alpha, params.beta} {
         assert(0.0 <= params.error_rate && params.error_rate <= 1.0);
         assert(params.zero_count >= 0.0);
         assert(params.ploidy >= 0.0);
@@ -108,68 +106,58 @@ public:
 
     void RescaleBcf(const char *path);
 
-    void ResetHistogram() {
-        histogram_.ZeroCounts();
-    }
+    void ResetHistogram() { histogram_.ZeroCounts(); }
 
     void FinishHistogram();
 
     const SofosHistogram histogram() const { return histogram_; }
 
     // This is a template in case SofosHistogram::AddCounts becomes an overloaded function
-    template<typename T>
+    template <typename T>
     void AddCounts(const std::vector<T> &counts, int anc, double error_rate);
 
-private:
+   private:
     sofos_params_t params_;
 
     SofosHistogram histogram_;
 
-public:
-    friend void output_header(std::ostream &os, const Sofos &sofos,
-        const std::vector<const char *> &paths);
+   public:
+    friend void output_header(std::ostream &os, const Sofos &sofos, const std::vector<const char *> &paths);
     friend void output_body(std::ostream &os, const Sofos &sofos);
 };
 
-inline
-SofosHistogram::SofosHistogram(int size, double alpha, double beta) :
-    size_{size}, alpha_{alpha}, beta_{beta}
-{
+inline SofosHistogram::SofosHistogram(int size, double alpha, double beta) : size_{size}, alpha_{alpha}, beta_{beta} {
     assert(size > 0);
     assert(alpha > 0.0 && beta > 0.0);
 
     ZeroCounts();
 }
 
-inline
-void SofosHistogram::ZeroCounts() {
+inline void SofosHistogram::ZeroCounts() {
     // A sample of N copies can have [0,N] derived alleles.
-    prior_.assign(size_+1, 0.0);
-    observed_.assign(size_+1,0.0);
-    posterior_.assign(size_+1, 0.0);
+    prior_.assign(size_ + 1, 0.0);
+    observed_.assign(size_ + 1, 0.0);
+    posterior_.assign(size_ + 1, 0.0);
 }
 
-inline
-void SofosHistogram::AddCounts(double num_derived_copies, double num_ancestral_copies, double weight) {
-    update_counts(num_derived_copies+alpha_, num_ancestral_copies+beta_, weight, &posterior_);
+inline void SofosHistogram::AddCounts(double num_derived_copies, double num_ancestral_copies, double weight) {
+    update_counts(num_derived_copies + alpha_, num_ancestral_copies + beta_, weight, &posterior_);
     update_bins(num_derived_copies, num_ancestral_copies, weight, &observed_);
 }
 
-inline
-void SofosHistogram::CalculatePrior() {
-    prior_.assign(size_+1, 0.0);
-    double weight = std::accumulate(posterior_.begin(),posterior_.end(),0.0);
+inline void SofosHistogram::CalculatePrior() {
+    prior_.assign(size_ + 1, 0.0);
+    double weight = std::accumulate(posterior_.begin(), posterior_.end(), 0.0);
     update_counts(alpha_, beta_, weight, &prior_);
 }
 
-inline
-void SofosHistogram::Fold() {
+inline void SofosHistogram::Fold() {
     fold_histogram(&prior_);
     fold_histogram(&observed_);
     fold_histogram(&posterior_);
 }
 
-template<typename T>
+template <typename T>
 void Sofos::AddCounts(const std::vector<T> &counts, int anc, double error_rate) {
     auto n_total = std::accumulate(counts.begin(), counts.end(), T{0});
     if(n_total == T{0}) {
@@ -184,7 +172,7 @@ void Sofos::AddCounts(const std::vector<T> &counts, int anc, double error_rate) 
         // allele is ancestral. Thus we will update the posterior weighted
         // by the possibility of each occurrence.
         // The probability that an der is ancestral is its frequency.
-        error_rate = static_cast<double>(n_der)/n_total;
+        error_rate = static_cast<double>(n_der) / n_total;
     }
 
     // Update Posterior and Observed using observed counts
@@ -193,15 +181,14 @@ void Sofos::AddCounts(const std::vector<T> &counts, int anc, double error_rate) 
     } else {
         // If there is some level of uncertainty about the ancestral allele,
         // weight the two possibilities.
-        histogram_.AddCounts(n_der, n_anc, 1.0-error_rate);
+        histogram_.AddCounts(n_der, n_anc, 1.0 - error_rate);
         histogram_.AddCounts(n_anc, n_der, error_rate);
     }
 }
 
 // calculate prior and fold if necessary
 // should be done after the all data has been processed
-inline
-void Sofos::FinishHistogram() {
+inline void Sofos::FinishHistogram() {
     // calculate prior assuming no data
     histogram_.CalculatePrior();
 
@@ -213,14 +200,12 @@ void Sofos::FinishHistogram() {
 
 // folds the histogram so that the second half is added to the first half.
 // handles both odd and even vector sizes.
-inline
-void fold_histogram(std::vector<double> *counts) {
+inline void fold_histogram(std::vector<double> *counts) {
     assert(counts != nullptr);
-    for(int k=0;k<counts->size()/2;++k) {
-        (*counts)[k] += (*counts)[counts->size()-k-1];
+    for(int k = 0; k < counts->size() / 2; ++k) {
+        (*counts)[k] += (*counts)[counts->size() - k - 1];
     }
-    counts->resize((counts->size()+1)/2);
+    counts->resize((counts->size() + 1) / 2);
 }
 
-
-#endif // SOFOS_SOFOS_HPP
+#endif  // SOFOS_SOFOS_HPP

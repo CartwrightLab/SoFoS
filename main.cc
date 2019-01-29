@@ -27,53 +27,56 @@ SOFTWARE.
 
 #include "sofos.hpp"
 
+#include <unistd.h>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 
 // print a usage message for sofos
 void print_usage(const char* exe, std::ostream& os) {
     const char* p = std::strrchr(exe, '/');
     if(p != nullptr && p[0] != '\0' && p[1] != '\0') {
-        exe = p+1;
+        exe = p + 1;
     }
-    os << "Usage: " << exe << " [OPTION]... [FILE] > [OUTPUT]\n"
-    "Rescale genetic polymorphism data to match a common sample size.\n"
-    "\n"
-    "With no FILE or when FILE is -, read standard input.\n"
-    "\n"
-    "  -a number -b number  shape parameters of beta prior\n"
-    "  -n integer           number of gene copies in posterior resample\n"
-    "  -f -u                generated (f)olded or (u)nfolded distributions\n"
-    "  -t -r                use AA (t)ag or (r)eference allele as ancestral\n"
-    "  -e number            probability of ancestral allele misassignment\n"
-    "  -p [or] -pp          use GP tag to estimate allele frequencies\n"
-    "  -z number            add extra invariant sites to manage ascertainment bias\n"
-    "  -P number            average ploidy of samples (used with -z)\n"
-    "  -q -v                (q)uiet progress info or be (v)erbose\n"
-    "  -h                   print usage information\n"
-    "\n"
-    "Default: " << exe << " -f -a 1.0 -b 1.0 -n 9\n"
-    "Notes: Unless otherwise stated -f enables -r and -u enables -t.\n"
-    "       -p specifies that GP contains probabilities in the range 0 and 1.\n"
-    "       -pp specifies that GP contains phred-scaled probabilities.\n"
-    "       -e is only used when generating unfolded spectra.\n"
-    "\n"
-    "Copyright (c) 2019 Reed A. Cartwright, PhD <reed@cartwrig.ht>\n"
-    "\n";
+    os << "Usage: " << exe
+       << " [OPTION]... [FILE] > [OUTPUT]\n"
+          "Rescale genetic polymorphism data to match a common sample size.\n"
+          "\n"
+          "With no FILE or when FILE is -, read standard input.\n"
+          "\n"
+          "  -a number -b number  shape parameters of beta prior\n"
+          "  -n integer           number of gene copies in posterior resample\n"
+          "  -f -u                generated (f)olded or (u)nfolded distributions\n"
+          "  -t -r                use AA (t)ag or (r)eference allele as ancestral\n"
+          "  -e number            probability of ancestral allele misassignment\n"
+          "  -p [or] -pp          use GP tag to estimate allele frequencies\n"
+          "  -z number            add extra invariant sites to manage ascertainment bias\n"
+          "  -P number            average ploidy of samples (used with -z)\n"
+          "  -q -v                (q)uiet progress info or be (v)erbose\n"
+          "  -h                   print usage information\n"
+          "\n"
+          "Default: "
+       << exe
+       << " -f -a 1.0 -b 1.0 -n 9\n"
+          "Notes: Unless otherwise stated -f enables -r and -u enables -t.\n"
+          "       -p specifies that GP contains probabilities in the range 0 and 1.\n"
+          "       -pp specifies that GP contains phred-scaled probabilities.\n"
+          "       -e is only used when generating unfolded spectra.\n"
+          "\n"
+          "Copyright (c) 2019 Reed A. Cartwright, PhD <reed@cartwrig.ht>\n"
+          "\n";
 }
 
 // Main program entry point
 #ifndef CATCH_CONFIG_MAIN
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     try {
         // default parameters
         sofos_params_t params;
 
         int refalt = -1;
-                
+
         int use_gp = 0;
 
         // Process program options via getopt
@@ -87,7 +90,7 @@ int main(int argc, char *argv[]) {
                 params.beta = std::stod(optarg);
                 break;
             case 'n':
-                params.size =  std::stoi(optarg);
+                params.size = std::stoi(optarg);
                 break;
             case 'e':
                 params.error_rate = std::stod(optarg);
@@ -124,7 +127,7 @@ int main(int argc, char *argv[]) {
                 return EXIT_SUCCESS;
             case '?':
                 print_usage(argv[0], std::cerr);
-                return EXIT_FAILURE;                
+                return EXIT_FAILURE;
             };
         }
         // Setup flags for sofos_main
@@ -135,14 +138,14 @@ int main(int argc, char *argv[]) {
         Sofos sofos{params};
 
         // read input from a file or fall back to stdin
-        std::vector<const char*> paths(argv+optind, argv+argc);
+        std::vector<const char*> paths(argv + optind, argv + argc);
         if(paths.empty()) {
-            paths.push_back("-");            
+            paths.push_back("-");
         }
 
         output_header(std::cout, sofos, paths);
 
-        for(auto && path : paths) {
+        for(auto&& path : paths) {
             sofos.RescaleBcf(path);
         }
         sofos.FinishHistogram();
@@ -151,7 +154,7 @@ int main(int argc, char *argv[]) {
 
         return EXIT_SUCCESS;
 
-    } catch(std::exception &e) {
+    } catch(std::exception& e) {
         // If an exception is thrown, print it to stderr.
         std::cerr << "ERROR: " << e.what() << std::endl;
     }
