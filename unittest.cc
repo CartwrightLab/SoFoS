@@ -805,11 +805,11 @@ TEST_CASE("output_body generates a csv table containing column names and values"
             }
             table.push_back(tokens);
         }
-        return table;        
+        return table;
     };
 
-    SECTION("when histogram is unfolded"){
-        params.flag_folded = false;       
+    SECTION("when histogram is unfolded") {
+        params.flag_folded = false;
         Sofos sofos{params};
         sofos.FinishHistogram();
         output_body(str, sofos);
@@ -823,7 +823,7 @@ TEST_CASE("output_body generates a csv table containing column names and values"
         CHECK(table[4].size() == 4);
         CHECK(table[5].size() == 4);
     }
-    SECTION("when histogram is folded"){
+    SECTION("when histogram is folded") {
         params.flag_folded = true;
         Sofos sofos{params};
         sofos.FinishHistogram();
