@@ -4,7 +4,6 @@ HTSLIB?=-lhts -lm
 CLANGTIDY?=clang-tidy
 CLANGFORMAT?=clang-format
 
-
 SOFOSFLAGS=-std=c++11 $(HTSLIB)
 GCOVFLAGS=-fprofile-arcs -ftest-coverage -fPIC
 GPROFFLAGS=-pg
@@ -16,7 +15,7 @@ all: sofos
 .PHONY: default all clean
 
 clean:
-	rm -f sofos sofos_debug sofos_test sofos_test_coverage sofos_coverage
+	rm -f sofos sofos_debug sofos_unittest sofos_unittest_coverage sofos_coverage
 	rm -f *.gcov *.gcda *.gcno
 	rm -f coverage*.html
 	rm -f clang-tidy.txt clang-format.patch
@@ -31,29 +30,29 @@ sofos: $(SOFOSCC) $(SOFOSHPP)
 sofos_debug: $(SOFOSCC) $(SOFOSHPP)
 	$(CXX) -g -O0 $(SOFOSFLAGS) -o $@ $(SOFOSCC)
 
-sofos_test: $(SOFOSCC) $(SOFOSHPP)
-	$(CXX) -g -O0 $(SOFOSFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
-
-sofos_test_coverage: $(SOFOSCC) $(SOFOSHPP)
-	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
-
 sofos_coverage: $(SOFOSCC) $(SOFOSHPP)
 	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -o $@ $(SOFOSCC)
 
-test: sofos_test sofos_debug
-	./sofos_test
+sofos_unittest: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) -g -O0 $(SOFOSFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
+
+sofos_unittest_coverage: $(SOFOSCC) $(SOFOSHPP)
+	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(SOFOSCC)
+
+test: sofos_unittest sofos_debug
+	./sofos_unittest
 	cd test && bash test-01.bash ../sofos_debug
 
-coverage: sofos_test_coverage sofos_coverage
+coverage: sofos_coverage sofos_unittest_coverage
 	rm -f *.gcda
-	./sofos_test_coverage
+	./sofos_unittest_coverage
 	cd test && bash test-01.bash ../sofos_coverage	
 	gcovr -r . -e catch.hpp -e test_utils.hpp --html-details -o coverage.html
 
-test_codecov: sofos_test_coverage sofos_coverage
+test_codecov: sofos_unittest_coverage sofos_coverage
 	rm -f *.gcda
-	./sofos_test_coverage
-	cd test && bash test-01.bash ../sofos_coverage	
+	./sofos_unittest_coverage
+	cd test && bash test-01.bash ../sofos_coverage
 	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
 	bash -c 'bash <(curl -s https://codecov.io/bash)'
 
