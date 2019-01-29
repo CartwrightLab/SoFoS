@@ -790,30 +790,52 @@ TEST_CASE("output_header generates a header containing program information") {
 TEST_CASE("output_body generates a csv table containing column names and values") {
     sofos_params_t params;
     params.size = 4;
-    Sofos sofos{params};
+
     std::stringstream str;
-    output_body(str, sofos);
-
-    std::vector<std::vector<std::string>> table;
-    std::string line;
-    while(std::getline(str, line, '\n')) {
-        std::stringstream row;
-        row.str(line);
-        std::string token;
-        std::vector<std::string> tokens;
-        while(std::getline(row, token, ',')) {
-            tokens.push_back(token);
+    auto parse_table = [&]() -> std::vector<std::vector<std::string>> {
+        std::vector<std::vector<std::string>> table;
+        std::string line;
+        while(std::getline(str, line, '\n')) {
+            std::stringstream row;
+            row.str(line);
+            std::string token;
+            std::vector<std::string> tokens;
+            while(std::getline(row, token, ',')) {
+                tokens.push_back(token);
+            }
+            table.push_back(tokens);
         }
-        table.push_back(tokens);
-    }
+        return table;        
+    };
 
-    REQUIRE(table.size() == 6);
-    CHECK(table[0].size() == 4);
-    CHECK(table[1].size() == 4);
-    CHECK(table[2].size() == 4);
-    CHECK(table[3].size() == 4);
-    CHECK(table[4].size() == 4);
-    CHECK(table[5].size() == 4);
+    SECTION("when histogram is unfolded"){
+        params.flag_folded = false;       
+        Sofos sofos{params};
+        sofos.FinishHistogram();
+        output_body(str, sofos);
+        auto table = parse_table();
+
+        REQUIRE(table.size() == 6);
+        CHECK(table[0].size() == 4);
+        CHECK(table[1].size() == 4);
+        CHECK(table[2].size() == 4);
+        CHECK(table[3].size() == 4);
+        CHECK(table[4].size() == 4);
+        CHECK(table[5].size() == 4);
+    }
+    SECTION("when histogram is folded"){
+        params.flag_folded = true;
+        Sofos sofos{params};
+        sofos.FinishHistogram();
+        output_body(str, sofos);
+        auto table = parse_table();
+
+        REQUIRE(table.size() == 4);
+        CHECK(table[0].size() == 4);
+        CHECK(table[1].size() == 4);
+        CHECK(table[2].size() == 4);
+        CHECK(table[3].size() == 4);
+    }
 }
 
 TEST_CASE("Retrieving values from a VCF file") {

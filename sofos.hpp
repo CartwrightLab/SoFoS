@@ -65,11 +65,10 @@ class SofosHistogram {
     void ZeroCounts();
 
     size_t num_rows() const {
-        assert(prior_.size() == size_ + 1);
-        assert(observed_.size() == size_ + 1);
-        assert(posterior_.size() == size_ + 1);
+        assert(prior_.size() == posterior_.size());
+        assert(observed_.size() == posterior_.size());
 
-        return size_ + 1;
+        return posterior_.size();
     }
 
     std::array<double, 3> row(size_t i) const {
