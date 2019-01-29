@@ -33,7 +33,7 @@ jobs:
           command: 'make test_tidy'
       - run:
           name: Run Clang Format Tests
-          command: 'make clang_format'
+          command: 'make test_format'
 workflows:
   version: 2
   build_and_test:
