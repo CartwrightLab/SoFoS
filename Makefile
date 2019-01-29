@@ -16,6 +16,7 @@ all: sofos
 
 clean:
 	rm -f sofos sofos_debug unittest unittest_coverage sofos_coverage
+	rm -f *.o
 	rm -f *.gcov *.gcda *.gcno
 	rm -f coverage*.html
 	rm -f clang-tidy.txt clang-format.patch
@@ -49,19 +50,18 @@ unittest_coverage: $(patsubst %.cc,%_cov.o,$(UNITCC))
 
 test: unittest sofos_debug
 	./unittest
-	cd test && bash test-01.bash ../sofos_debug
+	cd test && bash run_tests.bash ../sofos_debug
 
 coverage: sofos_coverage unittest_coverage
 	rm -f *.gcda
 	./unittest_coverage
-	cd test && bash test-01.bash ../sofos_coverage	
+	cd test && bash run_tests.bash ../sofos_coverage	
 	gcovr -r . -e catch.hpp -e unittest.cc --html-details -o coverage.html
 
-test_codecov: sofos_unittest_coverage sofos_coverage
+test_codecov: sofos_coverage unittest_coverage
 	rm -f *.gcda
 	./unittest_coverage
-	cd test && bash test-01.bash ../sofos_coverage
-	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
+	cd test && bash run_tests.bash ../sofos_coverage
 	bash -c 'bash <(curl -s https://codecov.io/bash)'
 
 tidy:
