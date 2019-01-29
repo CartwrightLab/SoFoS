@@ -1,7 +1,7 @@
 ---
 Checks:          'clang-diagnostic-*,clang-analyzer-*,cert-*,cppcoreguidelines-*,google-*,llvm-*,misc-*,modernize-*,performance-*,portability-*,readility-*,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-llvm-header-guard,-llvm-include-order,-clang-diagnostic-missing-braces,-misc-misplaced-widening-cast'
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*'
+HeaderFilterRegex: '[^/]*'
 AnalyzeTemporaryDtors: false
 User:            reed
 CheckOptions:    

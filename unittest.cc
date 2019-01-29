@@ -21,13 +21,14 @@ SOFTWARE.
 *****************************************************************************/
 #include "sofos.hpp"
 
-#define CATCH_CONFIG_MAIN
-#include "catch.hpp"
-
-#include <sstream>
+namespace Catch {
+namespace Detail {
+class Approx;
+}  // namespace Detail
+}  // namespace Catch
 
 template <typename T>
-bool operator==(const std::vector<T> &a, const std::vector<Approx> &b) {
+bool operator==(const std::vector<T> &a, const std::vector<Catch::Detail::Approx> &b) {
     if(a.size() != b.size()) {
         return false;
     }
@@ -39,12 +40,21 @@ bool operator==(const std::vector<T> &a, const std::vector<Approx> &b) {
     return true;
 }
 
-struct kstring_obj_t : public kstring_t {
-    kstring_obj_t() : kstring_t{0, 0, nullptr} {}
+#define CATCH_CONFIG_MAIN
+#include "contrib/catch.hpp"
+
+#include <sstream>
+
+struct kstring_obj_t : public kstring_t {  // NOLINT
+    kstring_obj_t() : kstring_t{} {
+        l = 0;
+        m = 0;
+        s = nullptr;
+    }
 
     ~kstring_obj_t() {
         if(s != nullptr) {
-            free(s);
+            free(s);  // NOLINT
         }
     }
 };
@@ -71,11 +81,11 @@ TEST_CASE("Combinadic generates the combinatorial number system") {
 }
 
 TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
 
     g_sofos_quiet = true;
 
-    char header_str[] =
+    const char header_str[] =
         "##fileformat=VCFv4.2\n"
         "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
         "##INFO=<ID=AA,Number=1,Type=String,Description=\"Ancestral Allele\">\n"
@@ -99,7 +109,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
                 hts_close(p);
             }
         }
-        data += header_str;
+        data += &header_str[0];
         data += lines;
         Sofos sofos{params};
         sofos.RescaleBcf(data.c_str());
@@ -112,7 +122,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 
     SECTION("when refalt=false") {
         params.flag_refalt = false;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=9\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=9\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {1.0_a, 0.0_a, 0.0_a};
@@ -123,7 +133,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when refalt=false AA is missing") {
         params.flag_refalt = false;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAN=10;AC=9\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAN=10;AC=9\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
         std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
@@ -134,7 +144,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when refalt=true") {
         params.flag_refalt = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {1.0_a, 0.0_a, 0.0_a};
@@ -145,7 +155,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when AC and GT are missing") {
         params.flag_refalt = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\t.\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\t.\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
         std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
@@ -156,7 +166,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when there are two sites") {
         params.flag_refalt = true;
-        const char str[] =
+        const char *str =
             "1\t1\t.\tA\tC\t.\t.\tAN=10;AC=1\n"
             "1\t2\t.\tA\tC\t.\t.\tAN=10;AC=5\n";
         auto hist = rescale(params, str);
@@ -169,7 +179,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when use_gp=true") {
         params.flag_use_gp = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT:GP\t0/0:1,0,0\t0/1:0,1,0\t1/1:0,0,1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT:GP\t0/0:1,0,0\t0/1:0,1,0\t1/1:0,0,1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {0.0_a, 1.0_a, 0.0_a};
@@ -180,7 +190,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when use_gp=true and GP is missing") {
         params.flag_use_gp = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT\t0/0\t0/1\t1/1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT\t0/0\t0/1\t1/1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
         std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
@@ -191,7 +201,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when use_gp=true and GT is missing") {
         params.flag_use_gp = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGP\t1,0,0\t0,1,0\t0,0,1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGP\t1,0,0\t0,1,0\t0,0,1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
         std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
@@ -202,7 +212,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when there is no data") {
         params.flag_use_gp = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=0;AC=0\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=0;AC=0\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.0_a, 0.0_a, 0.0_a};
         std::vector<Approx> expected_observed = {0.0_a, 0.0_a, 0.0_a};
@@ -214,7 +224,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     SECTION("when use_gp=true and gp_phred=true") {
         params.flag_use_gp = true;
         params.flag_phred_gp = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT:GP\t0/0:0,100,100\t0/1:100,0,100\t1/1:100,100,0\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=C;AN=10;AC=0\tGT:GP\t0/0:0,100,100\t0/1:100,0,100\t1/1:100,100,0\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {0.0_a, 1.0_a, 0.0_a};
@@ -227,7 +237,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
         params.flag_refalt = true;
         params.zero_count = 1.0;
         params.ploidy = 10.0 / 3.0;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.6666667_a, 0.6666667_a, 0.6666667_a};
         std::vector<Approx> expected_observed = {2.0_a, 0.0_a, 0.0_a};
@@ -239,7 +249,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     SECTION("when error_rate is specified") {
         params.flag_refalt = false;
         params.error_rate = 0.5;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {0.5_a, 0.0_a, 0.5_a};
@@ -250,7 +260,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     }
     SECTION("when AAQ is specified") {
         params.flag_refalt = false;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1;AAQ=3\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1;AAQ=3\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {0.4988128_a, 0.0_a, 0.5011872_a};
@@ -262,7 +272,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     SECTION("when AAQ and error_rate are specified") {
         params.flag_refalt = false;
         params.error_rate = 0.5;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1;AAQ=10\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=A;AN=10;AC=1;AAQ=10\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.3333333_a, 0.3333333_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {0.5_a, 0.0_a, 0.5_a};
@@ -274,7 +284,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
     SECTION("when folded=true") {
         params.flag_refalt = true;
         params.flag_folded = true;
-        const char str[] = "1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
+        const char *str = "1\t1\t.\tA\tC\t.\t.\tAA=G;AN=10;AC=1\n";
         auto hist = rescale(params, str);
         std::vector<Approx> expected_prior = {0.6666667_a, 0.3333333_a};
         std::vector<Approx> expected_observed = {1.0_a, 0.0_a};
@@ -286,7 +296,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 }
 
 TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
 
     char header_str[] =
         "##fileformat=VCFv4.2\n"
@@ -297,15 +307,15 @@ TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
-    REQUIRE((record_));
+    REQUIRE((record_));  // NOLINT
 
     std::unique_ptr<bcf_hdr_t, detail::header_free_t> header_{bcf_hdr_init("w")};
-    REQUIRE((header_));
+    REQUIRE((header_));  // NOLINT
 
     auto header = header_.get();
     auto record = record_.get();
 
-    int hret = bcf_hdr_parse(header, header_str);
+    int hret = bcf_hdr_parse(header, &header_str[0]);
     REQUIRE(hret == 0);
 
     auto parse_aa = [=](const char *line, int *anc) -> bool {
@@ -321,7 +331,7 @@ TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
 
         return calculate_aa(record, header, anc);
     };
-    int anc;
+    int anc = 0;
     bool ret;
 
     ret = parse_aa("1\t1\t.\tA\tC\t.\t.\tAA=A", &anc);
@@ -341,7 +351,7 @@ TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
 }
 
 TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
 
     char header_str[] =
         "##fileformat=VCFv4.2\n"
@@ -360,7 +370,7 @@ TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
     auto header = header_.get();
     auto record = record_.get();
 
-    int hret = bcf_hdr_parse(header, header_str);
+    int hret = bcf_hdr_parse(header, &header_str[0]);
     REQUIRE(hret == 0);
 
     auto parse_aaq = [=](const char *line, double *err) -> bool {
@@ -376,7 +386,7 @@ TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
 
         return calculate_aaq(record, header, err);
     };
-    double error_rate;
+    double error_rate = 0.0;
     bool ret;
 
     ret = parse_aaq("1\t1\t.\tA\tC\t.\t.\tAAQ=10", &error_rate);
@@ -410,7 +420,7 @@ TEST_CASE("calculate_ac() calculates allele counts from GT or AC/AN values") {
     auto header = header_.get();
     auto record = record_.get();
 
-    int ret = bcf_hdr_parse(header, header_str);
+    int ret = bcf_hdr_parse(header, &header_str[0]);
     REQUIRE(ret == 0);
 
     auto parse_ac = [=](const char *line, int ac_which, int sz) -> std::vector<int> {
@@ -472,7 +482,8 @@ TEST_CASE("calculate_ac() calculates allele counts from GT or AC/AN values") {
 }
 
 TEST_CASE("calculate_af() calculates allele counts from GP values") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
+
     char header_str[] =
         "##fileformat=VCFv4.2\n"
         "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
@@ -490,7 +501,7 @@ TEST_CASE("calculate_af() calculates allele counts from GP values") {
     auto header = header_.get();
     auto record = record_.get();
 
-    int ret = bcf_hdr_parse(header, header_str);
+    int ret = bcf_hdr_parse(header, &header_str[0]);
     REQUIRE(ret == 0);
 
     calculate_af_t calculate_af{3};
@@ -587,8 +598,8 @@ library(rmutil)
 dbetabinom(0:n,n,a/(a+b),a+b)
 */
 TEST_CASE("update_counts adds resampled data to a vector") {
-    using namespace Catch::literals;
-    auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon() * 100);
+    using Catch::literals::operator""_a;
+
     std::vector<double> expected = {0.714285714, 0.219780220, 0.054945055, 0.009990010, 0.000999001};
     std::vector<Approx> expected_a;
 
@@ -621,7 +632,7 @@ TEST_CASE("update_counts adds resampled data to a vector") {
 }
 
 TEST_CASE("update_bins maps a/(a+b) to a bin in the range of [0,N]/N") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
 
     std::vector<double> bins(4, 0.0);
 
@@ -663,7 +674,8 @@ TEST_CASE("update_bins maps a/(a+b) to a bin in the range of [0,N]/N") {
 }
 
 TEST_CASE("fold_histogram folds second half of a vector onto the first") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
+
     SECTION("fold histogram with even number of elements") {
         std::vector<double> v = {1, 2, 3, 10, 20, 30};
         fold_histogram(&v);
@@ -683,7 +695,8 @@ TEST_CASE("fold_histogram folds second half of a vector onto the first") {
 }
 
 TEST_CASE("quality_to_p01 converts a quality value to a [0,1] value.") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
+
     SECTION("quality_to_p01(int)") {
         CHECK(quality_to_p01(0) == 0.0_a);
         CHECK(quality_to_p01(10) == 0.9_a);
@@ -703,7 +716,8 @@ TEST_CASE("quality_to_p01 converts a quality value to a [0,1] value.") {
 }
 
 TEST_CASE("phred_to_p01 converts a phred value to a [0,1] value.") {
-    using namespace Catch::literals;
+    using Catch::literals::operator""_a;
+
     auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon() * 100);
     SECTION("phred_to_p01(int)") {
         CHECK(phred_to_p01(0) == 1.0_a);
@@ -814,22 +828,22 @@ TEST_CASE("Retrieving values from a VCF file") {
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n";
 
     std::unique_ptr<bcf1_t, detail::bcf_free_t> record_{bcf_init()};
-    REQUIRE((record_));
+    REQUIRE((record_));  // NOLINT
 
     std::unique_ptr<bcf_hdr_t, detail::header_free_t> header_{bcf_hdr_init("w")};
-    REQUIRE((header_));
+    REQUIRE((header_));  // NOLINT
 
     auto header = header_.get();
     auto record = record_.get();
 
     int n;
-    int ret = bcf_hdr_parse(header, header_str);
+    int ret = bcf_hdr_parse(header, &header_str[0]);
     REQUIRE(ret == 0);
     kstring_obj_t kstr;
 
     SECTION("when reading INFO integer tag") {
         auto buffer = make_buffer<int32_t>(1);
-        const char line1[] = "1\t1\t.\tA\tC\t.\t.\tTAG1=1;TAG2=1,1,1,1,1,1,1,1,1,1";
+        const char *line1 = "1\t1\t.\tA\tC\t.\t.\tTAG1=1;TAG2=1,1,1,1,1,1,1,1,1,1";
         ret = kputs(line1, &kstr);
         REQUIRE(ret > 0);
         ret = vcf_parse(&kstr, header, record);
@@ -847,7 +861,7 @@ TEST_CASE("Retrieving values from a VCF file") {
     }
     SECTION("when reading INFO string tag") {
         auto buffer = make_buffer<char>(1);
-        const char line1[] = "1\t1\t.\tA\tC\t.\t.\tTAG3=aaaaaaaaaaaaaaaaaaaaaaaa";
+        const char *line1 = "1\t1\t.\tA\tC\t.\t.\tTAG3=aaaaaaaaaaaaaaaaaaaaaaaa";
         ret = kputs(line1, &kstr);
         REQUIRE(ret > 0);
         ret = vcf_parse(&kstr, header, record);

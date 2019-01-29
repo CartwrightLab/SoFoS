@@ -24,7 +24,8 @@ clean:
 SOFOSCC=sofos.cc main.cc
 UNITCC=sofos.cc unittest.cc
 SOFOSHPP=sofos.hpp vcf.hpp
-FORMATFILES=$(SOFOSCC) $(SOFOSHPP) test_utils.hpp
+FORMATFILES=$(SOFOSCC) $(SOFOSHPP) unittest.cc
+TIDYFILES=$(SOFOSCC) unittest.cc
 
 sofos: $(SOFOSCC) $(SOFOSHPP)
 	$(CXX) $(CXXFLAGS) $(SOFOSFLAGS) -o $@ $(SOFOSCC)
@@ -65,10 +66,10 @@ test_codecov: sofos_coverage unittest_coverage
 	bash -c 'bash <(curl -s https://codecov.io/bash)'
 
 tidy:
-	$(CLANGTIDY) $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall
+	$(CLANGTIDY) $(TIDYFILES) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall
 
 format:
-	$(CLANGFORMAT) -i $(SOFOSCC) $(SOFOSHPP) $(SOFOSTESTHPP)
+	$(CLANGFORMAT) -i $(SOFOSCC) $(SOFOSHPP) $(FORMATFILES)
 
 test_format:
 	@echo 'Testing for code format issues...'
