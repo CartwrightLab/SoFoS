@@ -20,11 +20,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 *****************************************************************************/
 
-#ifdef SOFOS_UNIT_TESTS
-#define CATCH_CONFIG_MAIN
-#include "catch.hpp"
-#endif
-
 #include "sofos.hpp"
 
 #include <unistd.h>
@@ -67,7 +62,6 @@ void print_usage(const char* exe, std::ostream& os) {
 }
 
 // Main program entry point
-#ifndef CATCH_CONFIG_MAIN
 int main(int argc, char* argv[]) {
     try {
         // default parameters
@@ -158,4 +152,3 @@ int main(int argc, char* argv[]) {
     }
     return EXIT_FAILURE;
 }
-#endif

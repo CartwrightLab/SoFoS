@@ -26,6 +26,7 @@ SOFTWARE.
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <numeric>
 #include <ostream>
 #include <vector>
@@ -206,6 +207,115 @@ inline void fold_histogram(std::vector<double> *counts) {
         (*counts)[k] += (*counts)[counts->size() - k - 1];
     }
     counts->resize((counts->size() + 1) / 2);
+}
+
+// calculate allele counts from AC+AN or GT values.
+bool calculate_ac(bcf1_t *record, const bcf_hdr_t *header, int ac_which, std::vector<int> *ac_buffer);
+
+// a functor to calculate allele counts from GP values
+struct calculate_af_t {
+    explicit calculate_af_t(int nsamples) {
+        gp_buffer = make_buffer<float>(3 * nsamples);
+        gt_buffer = make_buffer<int32_t>(2 * nsamples);
+    }
+    bool operator()(bcf1_t *record, const bcf_hdr_t *header, bool phred_scaled, std::vector<double> *af_buffer);
+
+    // reusable buffers
+    buffer_t<float> gp_buffer;
+    buffer_t<int32_t> gt_buffer;
+};
+
+struct calculate_aa_t {
+    calculate_aa_t() : char_buffer_{make_buffer<char>(64)} {}
+
+    bool operator()(bcf1_t *record, const bcf_hdr_t *header, int *anc_allele);
+
+    buffer_t<char> char_buffer_;
+};
+
+struct calculate_aaq_t {
+    calculate_aaq_t() : int_buffer_{make_buffer<int32_t>(1)} {}
+
+    bool operator()(bcf1_t *record, const bcf_hdr_t *header, double *error_rate);
+
+    buffer_t<int32_t> int_buffer_;
+};
+
+std::pair<std::string, std::string> timestamp();
+
+double quality_to_p01(int x);
+double quality_to_p01(float x);
+double phred_to_p01(float x);
+double phred_to_p01(int x);
+
+// Utility class for handling the combinatorial number system used
+// in format fields with size=G.
+// https://en.wikipedia.org/wiki/Combinatorial_number_system
+class Combinadic {
+   public:
+    explicit Combinadic(int ploidy) : data_{0} { Reset(ploidy); }
+
+    // Reset to the lowest k-combination
+    void Reset(int ploidy) {
+        data_ = 0;
+        for(int j = 0; j < ploidy; ++j) {
+            data_ = (data_ << 1) | 0x1u;
+        }
+    }
+
+    // Permute the k-combination to the next highest value
+    void Next() {
+        // Gosper's Hack
+        uint64_t u = data_ & -data_;
+        uint64_t v = u + data_;
+        data_ = v + (((v ^ data_) / u) >> 2);
+    }
+
+    // Access an integer representing a k-combination
+    uint64_t Get() const { return data_; }
+
+   protected:
+    uint64_t data_;
+};
+
+inline double quality_to_p01(float x) { return -expm1(-x * (M_LN10 / 10.0)); }
+
+inline double phred_to_p01(float x) { return exp(-x * (M_LN10 / 10.0)); }
+
+inline double quality_to_p01(int x) {
+    assert(x >= 0);
+    static float data[96] = {
+        0.000000000, 0.205671765, 0.369042656, 0.498812766, 0.601892829, 0.683772234, 0.748811357, 0.800473769,
+        0.841510681, 0.874107459, 0.900000000, 0.920567177, 0.936904266, 0.949881277, 0.960189283, 0.968377223,
+        0.974881136, 0.980047377, 0.984151068, 0.987410746, 0.990000000, 0.992056718, 0.993690427, 0.994988128,
+        0.996018928, 0.996837722, 0.997488114, 0.998004738, 0.998415107, 0.998741075, 0.999000000, 0.999205672,
+        0.999369043, 0.999498813, 0.999601893, 0.999683772, 0.999748811, 0.999800474, 0.999841511, 0.999874107,
+        0.999900000, 0.999920567, 0.999936904, 0.999949881, 0.999960189, 0.999968377, 0.999974881, 0.999980047,
+        0.999984151, 0.999987411, 0.999990000, 0.999992057, 0.999993690, 0.999994988, 0.999996019, 0.999996838,
+        0.999997488, 0.999998005, 0.999998415, 0.999998741, 0.999999000, 0.999999206, 0.999999369, 0.999999499,
+        0.999999602, 0.999999684, 0.999999749, 0.999999800, 0.999999842, 0.999999874, 0.999999900, 0.999999921,
+        0.999999937, 0.999999950, 0.999999960, 0.999999968, 0.999999975, 0.999999980, 0.999999984, 0.999999987,
+        0.999999990, 0.999999992, 0.999999994, 0.999999995, 0.999999996, 0.999999997, 0.999999997, 0.999999998,
+        0.999999998, 0.999999999, 0.999999999, 0.999999999, 0.999999999, 0.999999999, 1.000000000, 1.000000000};
+    return (x < 96) ? data[x] : 1.0;  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+}
+
+inline double phred_to_p01(int x) {
+    assert(x >= 0);
+    static float data[96] = {
+        1.000000000, 0.794328235, 0.630957344, 0.501187234, 0.398107171, 0.316227766, 0.251188643, 0.199526231,
+        0.158489319, 0.125892541, 0.100000000, 0.079432823, 0.063095734, 0.050118723, 0.039810717, 0.031622777,
+        0.025118864, 0.019952623, 0.015848932, 0.012589254, 0.010000000, 0.007943282, 0.006309573, 0.005011872,
+        0.003981072, 0.003162278, 0.002511886, 0.001995262, 0.001584893, 0.001258925, 0.001000000, 0.000794328,
+        0.000630957, 0.000501187, 0.000398107, 0.000316228, 0.000251189, 0.000199526, 0.000158489, 0.000125893,
+        0.000100000, 0.000079433, 0.000063096, 0.000050119, 0.000039811, 0.000031623, 0.000025119, 0.000019953,
+        0.000015849, 0.000012589, 0.000010000, 0.000007943, 0.000006310, 0.000005012, 0.000003981, 0.000003162,
+        0.000002512, 0.000001995, 0.000001585, 0.000001259, 0.000001000, 0.000000794, 0.000000631, 0.000000501,
+        0.000000398, 0.000000316, 0.000000251, 0.000000200, 0.000000158, 0.000000126, 0.000000100, 0.000000079,
+        0.000000063, 0.000000050, 0.000000040, 0.000000032, 0.000000025, 0.000000020, 0.000000016, 0.000000013,
+        0.000000010, 0.000000008, 0.000000006, 0.000000005, 0.000000004, 0.000000003, 0.000000003, 0.000000002,
+        0.000000002, 0.000000001, 0.000000001, 0.000000001, 0.000000001, 0.000000001, 0.000000000, 0.000000000};
+    return (x < 96) ? data[x] : 0.0;  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 }
 
 #endif  // SOFOS_SOFOS_HPP
