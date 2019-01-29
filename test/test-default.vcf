@@ -8,4 +8,5 @@
 ##FORMAT=<ID=GP,Number=G,Type=Float,Description="Genotype Posteriors">
 ##contig=<ID=1,length=10000>
 #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	A	B	C
-1	1	.	A	C	30	PASS	AA=A;AN=6;AC=1	GT:GP	0/1:0,1,0	0/0:1,0,0	0/0:0,0,1
+1	1	.	A	C	30	PASS	AA=A;AN=6;AC=1	GT	0/1	0/0	0/0
+1	2	.	A	C	30	PASS	AA=C;AAQ=10	GT:GP	0/1	1/1	1/1
