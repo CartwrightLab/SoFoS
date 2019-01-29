@@ -19,6 +19,7 @@ clean:
 
 SOFOSCC=sofos.cc main.cc
 SOFOSHPP=sofos.hpp vcf.hpp
+FORMATFILES=$(SOFOSCC) $(SOFOSHPP) test_utils.hpp
 
 sofos: $(SOFOSCC) $(SOFOSHPP)
 	$(CXX) $(CXXFLAGS) $(SOFOSFLAGS) -o $@ $(SOFOSCC)
@@ -40,7 +41,7 @@ coverage: sofos_test_coverage
 	./sofos_test_coverage
 	gcovr -r . -e catch.hpp -e test_utils.hpp --html-details -o coverage.html
 
-codecov: sofos_test_coverage
+test_codecov: sofos_test_coverage
 	rm -f *.gcda
 	./sofos_test_coverage
 	for filename in $(SOFOSCC); do gcov -n -o . $$filename > /dev/null; done
@@ -50,6 +51,12 @@ tidy:
 	clang-tidy $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall
 
 format:
-	clang-format -i *.cc *.hpp
+	clang-format -i $(SOFOSCC) $(SOFOSHPP) $(SOFOSTESTHPP)
 
-.PHONY: coverage test codecov tidy format
+test_format: sofos_test_coverage
+	test 0 -eq `clang-format -output-replacements-xml $(FORMATFILES) 2>/dev/null | grep offset | wc -l`
+
+test_tidy: sofos_test_coverage
+	test 0 -eq `clang-tidy $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall 2>/dev/null | wc -l`
+
+.PHONY: coverage tidy format test test_codecov test_format
