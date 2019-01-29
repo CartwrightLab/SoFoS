@@ -1,11 +1,11 @@
 RSCRIPT?=Rscript --vanilla
 BCFTOOLS?=bcftools
 BGZIP?=bgzip
-SOFOS?=../sofos
+SOFOS?=../../sofos
 
 default: all
 
-all:
+all: sim01
 
 .PHONY: default all
 
@@ -16,7 +16,7 @@ sim01: sim01.vcf.gz sim01-samples1.sofos.csv sim01-samples2.sofos.csv \
 
 # SIM01
 sim01.vcf.gz:
-	$(RSCRIPT) vcfsim.R -a 0.1 -b 1 -m 10000 -n 10 -z 514803703 | $(BGZIP) > $@
+	$(RSCRIPT) ../vcfsim.R -a 0.1 -b 1 -m 10000 -n 10 -z 514803703 | $(BGZIP) > $@
 
 sim01-samples1.txt: sim01.vcf.gz
 	$(BCFTOOLS) query -l $< | head -n 8 > $@
