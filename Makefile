@@ -69,7 +69,7 @@ codecov.bash:
 
 # edit the xml inplace to upgrade partial hits to full hits
 test_codecov: coverage_xml codecov.bash
-	sed -i -e 's|condition-coverage="[^"]*\([0-9]\+\))"|condition-coverage="100% (\1/\1)"|g' cobertura.xml
+	sed -i -e 's|condition-coverage="[^0"][^"]*\([0-9]\+\))"|condition-coverage="100% (\1/\1)"|g' cobertura.xml
 	bash codecov.bash -X gcov search
 
 tidy:
