@@ -2,6 +2,9 @@
 Rescale genetic polymorphism data to match a common sample size.
 
 
+[![CircleCI](https://circleci.com/gh/CartwrightLab/SoFoS.svg?style=svg)](https://circleci.com/gh/CartwrightLab/SoFoS)
+[![codecov](https://codecov.io/gh/CartwrightLab/SoFoS/branch/master/graph/badge.svg)](https://codecov.io/gh/CartwrightLab/SoFoS)
+
 ## Usage
 
 `sofos [OPTION]... [FILE] > [OUTPUT]`
