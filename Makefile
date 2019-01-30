@@ -18,7 +18,7 @@ clean:
 	rm -f sofos sofos_debug unittest unittest_coverage sofos_coverage
 	rm -f *.o
 	rm -f *.gcov *.gcda *.gcno
-	rm -f coverage*.html
+	rm -f coverage*.html cobertura.xml
 	rm -f clang-tidy.txt clang-format.patch
 
 SOFOSCC=sofos.cc main.cc
@@ -57,13 +57,18 @@ coverage: sofos_coverage unittest_coverage
 	rm -f *.gcda
 	./unittest_coverage
 	cd test && bash run_tests.bash ../sofos_coverage	
+
+coverage_html: coverage
 	gcovr -r . -e catch.hpp -e unittest.cc --html-details -o coverage.html
 
-test_codecov: sofos_coverage unittest_coverage
-	rm -f *.gcda
-	./unittest_coverage
-	cd test && bash run_tests.bash ../sofos_coverage
-	bash -c 'bash <(curl -s https://codecov.io/bash)'
+coverage_xml: coverage
+	gcovr -r . -e catch.hpp -e unittest.cc -x -o cobertura.xml
+
+codecov.bash:
+	curl -s https://codecov.io/bash > $@
+
+test_codecov: coverage_xml codecov.bash
+	bash codecov.bash -X gcov search
 
 tidy:
 	$(CLANGTIDY) $(TIDYFILES) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall
@@ -81,4 +86,4 @@ test_tidy:
 	@$(CLANGTIDY) $(SOFOSCC) -- $(CXXFLAGS) $(SOFOSFLAGS) -Wall 2>/dev/null | tee clang-tidy.txt
 	@test 0 -eq `cat clang-tidy.txt | wc -l`
 
-.PHONY: coverage tidy format test test_codecov test_format cov
+.PHONY: coverage tidy format test test_codecov test_format test_tidy coverage_html coverage_xml
