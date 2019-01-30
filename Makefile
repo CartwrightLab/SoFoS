@@ -59,10 +59,10 @@ coverage: sofos_coverage unittest_coverage
 	cd test && bash run_tests.bash ../sofos_coverage	
 
 coverage_html: coverage
-	gcovr -r . -e catch.hpp -e unittest.cc --html-details -o coverage.html
+	gcovr -r . -s -e contrib/catch.hpp -e unittest.cc --html-details -o coverage.html
 
 coverage_xml: coverage
-	gcovr -r . -e catch.hpp -e unittest.cc -x -o cobertura.xml
+	gcovr -r . -s -e contrib/catch.hpp -e unittest.cc -x -o cobertura.xml
 
 codecov.bash:
 	curl -s https://codecov.io/bash > $@
