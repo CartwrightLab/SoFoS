@@ -26,6 +26,9 @@ jobs:
           name: Installing htslib
           command: sudo apt-get install -y libhts1 libhts-dev
       - run:
+          name: Install gcovr
+          command: sudo pip install gcovr
+      - run:
           name: Run Tests and Code Coverage
           command: 'make clean && make test_codecov'
   tidy:
