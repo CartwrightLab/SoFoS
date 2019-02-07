@@ -1,10 +1,19 @@
 CXX?=c++
 CXXFLAGS?=-O2 -DNDEBUG
-HTSLIB?=-lhts -lm
 CLANGTIDY?=clang-tidy
 CLANGFORMAT?=clang-format
 
-SOFOSFLAGS=-std=c++11 $(HTSLIB)
+LOCAL_HTSLIB_VERSION=1.9
+
+ifdef USE_LOCAL_HTSLIB
+HTSLIBFLAGS?=-I./htslib-$(LOCAL_HTSLIB_VERSION)
+HTSLIBS?=./htslib-$(LOCAL_HTSLIB_VERSION)/libhts.a -lz -lm -llzma -lbz2 -pthread
+else
+HTSLIBS?=-lhts -lm
+endif
+
+SOFOSFLAGS=-std=c++11 $(HTSLIBFLAGS)
+SOFOSLIBS=$(HTSLIBS)
 GCOVFLAGS=-fprofile-arcs -ftest-coverage -fPIC
 GPROFFLAGS=-pg
 
@@ -28,13 +37,13 @@ FORMATFILES=$(SOFOSCC) $(SOFOSHPP) unittest.cc
 TIDYFILES=$(SOFOSCC) unittest.cc
 
 sofos: $(SOFOSCC) $(SOFOSHPP)
-	$(CXX) $(CXXFLAGS) $(SOFOSFLAGS) -o $@ $(SOFOSCC)
+	$(CXX) $(CXXFLAGS) $(SOFOSFLAGS) -o $@ $(SOFOSCC) $(SOFOSLIBS)
 
 sofos_debug: $(SOFOSCC) $(SOFOSHPP)
-	$(CXX) -g -O0 $(SOFOSFLAGS) -o $@ $(SOFOSCC)
+	$(CXX) -g -O0 $(SOFOSFLAGS) -o $@ $(SOFOSCC) $(SOFOSLIBS)
 
 unittest: $(UNITCC) $(SOFOSHPP)
-	$(CXX) -g -O0 $(SOFOSFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(UNITCC)
+	$(CXX) -g -O0 $(SOFOSFLAGS) -DSOFOS_UNIT_TESTS -o $@ $(UNITCC) $(SOFOSLIBS)
 
 %_cov.o: %.cc
 	$(CXX) -c -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -o $@ $<
@@ -44,10 +53,10 @@ sofos_cov.o : $(SOFOSHPP)
 unit_cov.o : $(SOFOSHPP)
 
 sofos_coverage: $(patsubst %.cc,%_cov.o,$(SOFOSCC))
-	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -o $@ $^
+	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -o $@ $^ $(SOFOSLIBS)
 
 unittest_coverage: $(patsubst %.cc,%_cov.o,$(UNITCC))
-	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $^
+	$(CXX) -g -O0 $(SOFOSFLAGS) $(GCOVFLAGS) -DSOFOS_UNIT_TESTS -o $@ $^ $(SOFOSLIBS)
 
 test: unittest sofos_debug
 	./unittest
@@ -89,3 +98,15 @@ test_tidy:
 	@test 0 -eq `cat clang-tidy.txt | wc -l`
 
 .PHONY: coverage tidy format test test_codecov test_format test_tidy coverage_html coverage_xml
+
+
+htslib-$(LOCAL_HTSLIB_VERSION).tar.bz2:
+	curl -SL https://github.com/samtools/htslib/releases/download/$(LOCAL_HTSLIB_VERSION)/htslib-$(LOCAL_HTSLIB_VERSION).tar.bz2 > $@
+
+htslib-$(LOCAL_HTSLIB_VERSION): htslib-$(LOCAL_HTSLIB_VERSION).tar.bz2
+	tar xf $<
+
+htslib: htslib-$(LOCAL_HTSLIB_VERSION)
+	cd htslib-$(LOCAL_HTSLIB_VERSION) && $(MAKE)
+
+.PHONY: htslib
