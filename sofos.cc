@@ -38,7 +38,7 @@ bool g_sofos_quiet = false;
 // Utility class to output a message every X number of seconds
 class ProgressMessage {
    public:
-    ProgressMessage(std::ostream &os, int step) : output_{os}, step_{step}, next_{step} {
+    ProgressMessage(std::ostream &os, int step) : output_(os), step_{step}, next_{step} {
         start_ = std::chrono::steady_clock::now();
     }
 

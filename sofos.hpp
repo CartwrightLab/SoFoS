@@ -225,7 +225,7 @@ struct calculate_af_t {
 };
 
 struct calculate_aa_t {
-    calculate_aa_t() : char_buffer_{make_buffer<char>(64)} {}
+    calculate_aa_t() : char_buffer_(make_buffer<char>(64)) {}
 
     bool operator()(bcf1_t *record, const bcf_hdr_t *header, int *anc_allele);
 
@@ -233,7 +233,7 @@ struct calculate_aa_t {
 };
 
 struct calculate_aaq_t {
-    calculate_aaq_t() : int_buffer_{make_buffer<int32_t>(1)} {}
+    calculate_aaq_t() : int_buffer_(make_buffer<int32_t>(1)) {}
 
     bool operator()(bcf1_t *record, const bcf_hdr_t *header, double *error_rate);
 

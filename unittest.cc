@@ -81,7 +81,7 @@ TEST_CASE("Combinadic generates the combinatorial number system") {
 }
 
 TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     g_sofos_quiet = true;
 
@@ -296,7 +296,7 @@ TEST_CASE("Sofos::RescaleBcf rescales SFS to a new sample size") {
 }
 
 TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     char header_str[] =
         "##fileformat=VCFv4.2\n"
@@ -351,7 +351,7 @@ TEST_CASE("calculate_aa_t calculates the ancestral allele id") {
 }
 
 TEST_CASE("calculate_aaq_t calculates the ancestral allele error_rate") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     char header_str[] =
         "##fileformat=VCFv4.2\n"
@@ -482,7 +482,7 @@ TEST_CASE("calculate_ac() calculates allele counts from GT or AC/AN values") {
 }
 
 TEST_CASE("calculate_af() calculates allele counts from GP values") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     char header_str[] =
         "##fileformat=VCFv4.2\n"
@@ -598,7 +598,7 @@ library(rmutil)
 dbetabinom(0:n,n,a/(a+b),a+b)
 */
 TEST_CASE("update_counts adds resampled data to a vector") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     std::vector<double> expected = {0.714285714, 0.219780220, 0.054945055, 0.009990010, 0.000999001};
     std::vector<Approx> expected_a;
@@ -632,7 +632,7 @@ TEST_CASE("update_counts adds resampled data to a vector") {
 }
 
 TEST_CASE("update_bins maps a/(a+b) to a bin in the range of [0,N]/N") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     std::vector<double> bins(4, 0.0);
 
@@ -674,7 +674,7 @@ TEST_CASE("update_bins maps a/(a+b) to a bin in the range of [0,N]/N") {
 }
 
 TEST_CASE("fold_histogram folds second half of a vector onto the first") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     SECTION("fold histogram with even number of elements") {
         std::vector<double> v = {1, 2, 3, 10, 20, 30};
@@ -695,7 +695,7 @@ TEST_CASE("fold_histogram folds second half of a vector onto the first") {
 }
 
 TEST_CASE("quality_to_p01 converts a quality value to a [0,1] value.") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     SECTION("quality_to_p01(int)") {
         CHECK(quality_to_p01(0) == 0.0_a);
@@ -716,7 +716,7 @@ TEST_CASE("quality_to_p01 converts a quality value to a [0,1] value.") {
 }
 
 TEST_CASE("phred_to_p01 converts a phred value to a [0,1] value.") {
-    using Catch::literals::operator""_a;
+    using Catch::literals::operator"" _a;
 
     auto zero = Approx(0.0).margin(std::numeric_limits<float>::epsilon() * 100);
     SECTION("phred_to_p01(int)") {
