@@ -570,7 +570,7 @@ TEST_CASE("calculate_af() calculates allele counts from GP values") {
     }
 }
 
-#if (defined(__GNUC__) && (__GNUC__ >= 5 || defined(__clang__))) || !defined(__GNUC__)
+#if(defined(__GNUC__) && (__GNUC__ >= 5 || defined(__clang__))) || !defined(__GNUC__)
 // GCC 5+ has std::get_time
 TEST_CASE("timestamp() returns the current localtime and epoch") {
     auto now = std::chrono::system_clock::now();
