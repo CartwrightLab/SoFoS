@@ -1,6 +1,5 @@
 # SoFoS
-Rescale genetic polymorphism data to match a common sample size.
-
+Rescale and smooth genetic polymorphism data to match a common sample size.
 
 [![CircleCI](https://circleci.com/gh/CartwrightLab/SoFoS.svg?style=svg)](https://circleci.com/gh/CartwrightLab/SoFoS)
 [![codecov](https://codecov.io/gh/CartwrightLab/SoFoS/branch/master/graph/badge.svg)](https://codecov.io/gh/CartwrightLab/SoFoS)
@@ -10,6 +9,8 @@ Rescale genetic polymorphism data to match a common sample size.
 `sofos [OPTION]... [FILE] > [OUTPUT]`
 
 With no FILE or when FILE is -, read standard input.
+
+Input format is a VCF/BCF file with genotypes.
 
 | Argument            |Description                   |
 |---------------------|------------------------------|
@@ -24,7 +25,7 @@ With no FILE or when FILE is -, read standard input.
 |-q -v                |(q)uiet progress info or be (v)erbose|
 |-h                   |print usage information|
 
-Defaults: `sofos -f -a 1.0 -b 1.0 -n 9 -d 2 -e 0`
+Defaults: `sofos -f -a 1.0 -b 1.0 -n 9`
 
 ### Notes
 

@@ -35,9 +35,10 @@ void print_usage(const char* exe, std::ostream& os) {
         exe = p + 1;
     }
     os << "Usage: " << exe << " [OPTION]... [FILE] > [OUTPUT]\n"
-       << "Rescale genetic polymorphism data to match a common sample size.\n"
+       << "Rescale and smooth genetic polymorphism data to match a common sample size.\n"
           "\n"
           "With no FILE or when FILE is -, read standard input.\n"
+          "Input format is a VCF/BCF file with genotypes.\n"
           "\n"
           "  -a number -b number  shape parameters of beta prior\n"
           "  -n integer           number of gene copies in posterior resample\n"
