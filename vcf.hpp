@@ -24,10 +24,11 @@ SOFTWARE.
 
 #include <htslib/vcf.h>
 #include <htslib/vcfutils.h>
+
 #include <chrono>
 #include <memory>
-#include <string>
 #include <stdexcept>
+#include <string>
 
 // The *_free_t classes are used enable RAII on pointers created by htslib.
 namespace detail {
