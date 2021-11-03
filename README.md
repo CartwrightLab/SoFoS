@@ -34,4 +34,4 @@ Defaults: `sofos -u -a 1.0 -b 1.0 -n 10 -P 2`
  - -pp specifies that GP contains phred-scaled probabilities.
  - -e is only used for generating unfolded spectra.
  - -n is the resampled population size 
- - 
+
