@@ -52,11 +52,12 @@ void print_usage(const char* exe, std::ostream& os) {
           "  -h                   print usage information\n"
           "\n"
           "Default: "
-       << exe << " -f -a 1.0 -b 1.0 -n 9\n"
+       << exe << " -u -P 2 -a 1.0 -b 1.0 -n 10\n"
        << "Notes: Unless otherwise stated -f enables -r and -u enables -t.\n"
           "       -p specifies that GP contains probabilities in the range 0 and 1.\n"
           "       -pp specifies that GP contains phred-scaled probabilities.\n"
           "       -e is only used when generating unfolded spectra.\n"
+          "       -n is the resampled population size. \n"
           "\n"
           "Copyright (c) 2019 Reed A. Cartwright, PhD <reed@cartwrig.ht>\n"
           "\n";
