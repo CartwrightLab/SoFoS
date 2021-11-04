@@ -25,7 +25,7 @@ Input format is a VCF/BCF file with genotypes.
 |-q -v                |(q)uiet progress info or be (v)erbose|
 |-h                   |print usage information|
 
-Defaults: `sofos -f -a 1.0 -b 1.0 -n 9`
+Defaults: `sofos -u -a 1.0 -b 1.0 -n 10 -P 2`
 
 ### Notes
 
@@ -33,3 +33,5 @@ Defaults: `sofos -f -a 1.0 -b 1.0 -n 9`
  - -p specifies that GP contains probabilities in the range 0 and 1.
  - -pp specifies that GP contains phred-scaled probabilities.
  - -e is only used for generating unfolded spectra.
+ - -n is the resampled population size 
+
